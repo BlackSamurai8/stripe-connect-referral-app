@@ -1,0 +1,1 @@
+fastapi==0.115.0\nuvicorn[standard]==0.30.0\nsqlalchemy==2.0.35\nalembic==1.13.2\nstripe==10.12.0\npython-dotenv==1.0.1\nhttpx==0.27.2\npydantic[email]==2.9.2\npydantic-settings==2.5.2\npython-jose[cryptography]==3.3.0\npasslib[bcrypt]==1.7.4\npsycopg2-binary==2.9.9\n
