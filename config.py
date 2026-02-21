@@ -1,1 +1,38 @@
-"""\nApplication configuration loaded from environment variables.\n"""\n\nfrom pydantic_settings import BaseSettings\nfrom functools import lru_cache\n\n\nclass Settings(BaseSettings):\n    # Stripe\n    stripe_secret_key: str\n    stripe_publishable_key: str\n    stripe_webhook_secret: str\n    stripe_connect_webhook_secret: str\n\n    # GoHighLevel\n    ghl_api_key: str\n    ghl_webhook_secret: str = ""\n\n    # Database\n    database_url: str = "sqlite:///./referral_app.db"\n\n    # App\n    app_secret_key: str = "change-me-in-production"\n    app_base_url: str = "http://localhost:8000"\n    frontend_url: str = "http://localhost:3000"\n\n    # Commission defaults\n    default_max_depth: int = 5\n\n    class Config:\n        env_file = ".env"\n        env_file_encoding = "utf-8"\n\n\n@lru_cache()\ndef get_settings() -> Settings:\n    return Settings()\n
+"""
+Application configuration loaded from environment variables.
+"""
+
+from pydantic_settings import BaseSettings
+from functools import lru_cache
+
+
+class Settings(BaseSettings):
+    # Stripe
+    stripe_secret_key: str
+    stripe_publishable_key: str
+    stripe_webhook_secret: str
+    stripe_connect_webhook_secret: str
+
+    # GoHighLevel
+    ghl_api_key: str
+    ghl_webhook_secret: str = ""
+
+    # Database
+    database_url: str = "sqlite:///./referral_app.db"
+
+    # App
+    app_secret_key: str = "change-me-in-production"
+    app_base_url: str = "http://localhost:8000"
+    frontend_url: str = "http://localhost:3000"
+
+    # Commission defaults
+    default_max_depth: int = 5
+
+    class Config:
+        env_file = ".env"
+        env_file_encoding = "utf-8"
+
+
+@lru_cache()
+def get_settings() -> Settings:
+    return Settings()

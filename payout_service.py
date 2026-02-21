@@ -1,5 +1,5 @@
 """
-Payout Service â Handles sending money to affiliates via Stripe Connect Transfers.
+Payout Service — Handles sending money to affiliates via Stripe Connect Transfers.
 
 This runs on a schedule (e.g., daily cron) to process approved commissions.
 """

@@ -113,7 +113,7 @@ class CommissionEngine:
     def handle_refund(self, db: Session, sale: Sale) -> list[Commission]:
         """
         Mark all commissions for a sale as refunded.
-        If already paid, we log it â you may want to handle clawbacks separately.
+        If already paid, we log it — you may want to handle clawbacks separately.
         """
         commissions = db.query(Commission).filter(Commission.sale_id == sale.id).all()
         refunded = []
@@ -121,7 +121,7 @@ class CommissionEngine:
         for commission in commissions:
             if commission.status == CommissionStatus.PAID:
                 logger.warning(
-                    f"Commission {commission.id} already paid â manual clawback may be needed"
+                    f"Commission {commission.id} already paid — manual clawback may be needed"
                 )
                 # You could create a negative commission or flag for manual review
             commission.status = CommissionStatus.REFUNDED
