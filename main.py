@@ -1,12 +1,12 @@
 """
-Stripe Connect Referral App â Main FastAPI Application.
+Stripe Connect Referral App — Main FastAPI Application.
 
 Endpoints:
-  /affiliates       â CRUD for affiliates + Stripe Connect onboarding
-  /campaigns        â CRUD for referral campaigns with commission tiers
-  /webhooks/stripe  â Stripe webhook handler (payments, refunds, account updates)
-  /webhooks/ghl     â GoHighLevel webhook handler (new orders)
-  /admin            â Dashboard data, payout triggers, referral tree views
+  /affiliates       — CRUD for affiliates + Stripe Connect onboarding
+  /campaigns        — CRUD for referral campaigns with commission tiers
+  /webhooks/stripe  — Stripe webhook handler (payments, refunds, account updates)
+  /webhooks/ghl     — GoHighLevel webhook handler (new orders)
+  /admin            — Dashboard data, payout triggers, referral tree views
 """
 
 import hashlib
@@ -48,7 +48,7 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# CORS â allow your frontend to call the API
+# CORS — allow your frontend to call the API
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_url, "http://localhost:3000"],
@@ -386,9 +386,9 @@ def update_campaign(campaign_id: str, data: CampaignCreate, db: Session = Depend
 async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     """
     Handle Stripe webhook events:
-    - payment_intent.succeeded â create sale + calculate commissions
-    - charge.refunded â mark commissions as refunded
-    - account.updated â update affiliate onboarding status
+    - payment_intent.succeeded → create sale + calculate commissions
+    - charge.refunded → mark commissions as refunded
+    - account.updated → update affiliate onboarding status
     """
     payload = await request.body()
     sig_header = request.headers.get("stripe-signature")
@@ -430,7 +430,7 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
 
 
 def _handle_payment_success(payment_intent: dict, db: Session):
-    """Process a successful payment â create sale and calculate commissions."""
+    """Process a successful payment — create sale and calculate commissions."""
     pi_id = payment_intent.get("id") if isinstance(payment_intent, dict) else payment_intent.id
     metadata = payment_intent.get("metadata", {}) if isinstance(payment_intent, dict) else (payment_intent.metadata or {})
     amount = payment_intent.get("amount") if isinstance(payment_intent, dict) else payment_intent.amount
@@ -473,7 +473,7 @@ def _handle_payment_success(payment_intent: dict, db: Session):
 
 
 def _handle_refund(charge: dict, db: Session):
-    """Handle a refund â mark related commissions as refunded."""
+    """Handle a refund — mark related commissions as refunded."""
     pi_id = charge.get("payment_intent") if isinstance(charge, dict) else charge.payment_intent
 
     if not pi_id:
@@ -526,7 +526,7 @@ async def stripe_connect_webhook(request: Request, db: Session = Depends(get_db)
     except (ValueError, stripe.SignatureVerificationError) as e:
         raise HTTPException(status_code=400, detail="Invalid signature")
 
-    # Reuse same handlers â the event structure is the same
+    # Reuse same handlers — the event structure is the same
     existing = db.get(WebhookEvent, event.id)
     if existing:
         return {"status": "already_processed"}
@@ -587,7 +587,7 @@ async def ghl_webhook(request: Request, db: Session = Depends(get_db)):
 def _handle_ghl_order(payload: dict, db: Session):
     """Process a GHL order event and create a sale with commissions."""
 
-    # Extract fields â adapt these to match your actual GHL webhook payload
+    # Extract fields — adapt these to match your actual GHL webhook payload
     contact_id = payload.get("contact_id") or payload.get("contactId", "")
     order_id = payload.get("order_id") or payload.get("orderId", "")
 
