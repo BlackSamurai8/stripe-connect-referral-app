@@ -73,6 +73,25 @@ def on_startup():
     logger.info("Database initialized")
 
 
+@app.get("/")
+def root():
+    """Root endpoint — API overview."""
+    return {
+        "app": "Stripe Connect Referral System",
+        "version": "1.0.0",
+        "docs": "/docs",
+        "health": "/health",
+        "endpoints": {
+            "affiliates": "/affiliates",
+            "campaigns": "/campaigns",
+            "webhooks_stripe": "/webhooks/stripe",
+            "webhooks_ghl": "/webhooks/ghl",
+            "admin_stats": "/admin/stats",
+            "admin_payouts": "/admin/run-payouts",
+        },
+    }
+
+
 # ===========================================================================
 # SCHEMAS
 # ===========================================================================
