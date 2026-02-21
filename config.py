@@ -28,6 +28,14 @@ class Settings(BaseSettings):
     # Commission defaults
     default_max_depth: int = 5
 
+    # Observability
+    log_level: str = "INFO"
+    sentry_dsn: str = ""
+
+    # Dead letter queue
+    dlq_max_retries: int = 3
+    dlq_retry_delay_minutes: int = 15
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
