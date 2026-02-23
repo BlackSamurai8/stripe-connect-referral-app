@@ -22,6 +22,7 @@ class Settings(BaseSettings):
 
     # App
     app_secret_key: str = "change-me-in-production"
+    admin_api_key: str = "change-me-in-production"
     app_base_url: str = "http://localhost:8000"
     frontend_url: str = "http://localhost:3000"
 
