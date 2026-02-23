@@ -17,6 +17,7 @@ import time
 # Import database models
 from database import (
     SessionLocal,
+    init_db,
     Affiliate,
     Campaign,
     CommissionTier,
