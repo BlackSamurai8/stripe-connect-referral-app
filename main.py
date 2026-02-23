@@ -27,6 +27,8 @@ from database import (
     DeadLetterQueue,
     WebhookEvent,
     Payout,
+    Sale,
+    Commission,
 )
 from settings import settings
 from commission_engine import CommissionEngine
