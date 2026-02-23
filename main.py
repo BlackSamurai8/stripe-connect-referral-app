@@ -8,9 +8,11 @@ from typing import Optional, List
 from contextlib import asynccontextmanager
 
 import sentry_sdk
-from fastapi import FastAPI, Header, HTTPException, Depends, status
+from fastapi import FastAPI, Header, HTTPException, Depends, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, EmailStr
+from sqlalchemy.orm import Session
 from loguru import logger
 import time
 
@@ -23,6 +25,8 @@ from database import (
     CommissionTier,
     AuditLog,
     DeadLetterQueue,
+    WebhookEvent,
+    Payout,
 )
 from settings import settings
 from commission_engine import CommissionEngine
