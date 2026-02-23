@@ -1,11 +1,14 @@
 """
-Database session management.
+Database session management with model re-exports.
 """
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from config import get_settings
-from models import Base
+from models import (
+    Base, Affiliate, Campaign, Commission, CommissionTier,
+    AuditLog, DeadLetterQueue, WebhookEvent, Payout
+)
 
 settings = get_settings()
 
