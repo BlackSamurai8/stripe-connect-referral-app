@@ -6,8 +6,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from config import get_settings
 from models import (
-    Base, Affiliate, Campaign, Commission, CommissionTier,
-    AuditLog, DeadLetterQueue, WebhookEvent, Payout
+    Base, Affiliate, AffiliateStatus, Campaign, Sale, Commission, CommissionStatus,
+    CommissionTier, AuditLog, DeadLetterQueue, WebhookEvent, Payout, PayoutStatus
 )
 
 settings = get_settings()
