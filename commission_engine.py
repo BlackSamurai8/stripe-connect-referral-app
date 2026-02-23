@@ -280,134 +280,7 @@ class CommissionEngine:
 
         return created_commissions, summary
 
-t_affiliate.id,
-                    }
-                )
-                break
-
-            # Check if parent is active
-            if parent_affiliate.status != AffiliateStatus.ACTIVE:
-                logger.info(
-                    "Skipping inactive parent affiliate",
-                    extra={
-                        'sale_id': sale.id,
-                        'affiliate_id': parent_affiliate.id,
-                        'status': parent_affiliate.status,
-                        'level': current_level,
-                    }
-                )
-                current_affiliate = parent_affiliate
-                current_level += 1
-                continue
-
-            # Get rate for this level
-            if current_level not in rates_by_level:
-                logger.info(
-                    "No commission rate for level",
-                    extra={
-                        'sale_id': sale.id,
-                        'level': current_level,
-                        'affiliate_id': parent_affiliate.id,
-                    }
-                )
-                break
-
-            rate_info = rates_by_level[current_level]
-            base_rate = rate_info['rate']
-            bonus_rate = rate_info.get('bonus_rate', 0.0)
-            min_referrals = rate_info.get('min_referrals_required', 0)
-
-            # Apply tiered bonus if applicable
-            final_rate = base_rate
-            bonus_applied = False
-            if min_referrals > 0:
-                referral_count = self._count_direct_referrals(parent_affiliate)
-                if referral_count >= min_referrals:
-                    final_rate = base_rate + bonus_rate
-                    bonus_applied = True
-                    logger.info(
-                        "Bonus rate applied",
-                        extra={
-                            'sale_id': sale.id,
-                            'affiliate_id': parent_affiliate.id,
-                            'level': current_level,
-                            'referral_count': referral_count,
-                            'min_required': min_referrals,
-                            'base_rate': base_rate,
-                            'bonus_rate': bonus_rate,
-                            'final_rate': final_rate,
-                        }
-                    )
-
-            # Calculate commission amount
-            commission_amount = int(sale.amount_cents * final_rate)
-
-            # Calculate hold_until date
-            hold_until = datetime.now(timezone.utc) + timedelta(days=campaign.hold_days)
-
-            # Record this commission
-            commission_record = CommissionRecord(
-                affiliate_id=parent_affiliate.id,
-                level=current_level,
-                rate=final_rate,
-                amount_cents=commission_amount,
-                hold_until=hold_until,
-            )
-            commission_records.append(commission_record)
-
-            logger.info(
-                "Commission record created",
-                extra={
-                    'sale_id': sale.id,
-                    'affiliate_id': parent_affiliate.id,
-                    'level': current_level,
-                    'rate': final_rate,
-                    'amount_cents': commission_amount,
-                    'bonus_applied': bonus_applied,
-                }
-            )
-
-            # Move up the tree
-            current_affiliate = parent_affiliate
-            current_level += 1
-
-        # Create Commission records in database
-        created_commissions = self._create_commission_records(sale, commission_records)
-
-        # Build summary
-        total_amount = sum(c.amount_cents for c in created_commissions)
-        summary = CommissionSummary(
-            sale_id=sale.id,
-            campaign_id=campaign.id,
-            total_commissions_count=len(created_commissions),
-            total_amount_cents=total_amount,
-            max_depth_reached=current_level - 1,
-            commissions=[
-                {
-                    'affiliate_id': c.affiliate_id,
-                    'level': c.level,
-                    'rate': c.rate,
-                    'amount_cents': c.amount_cents,
-                    'status': c.status,
-                    'hold_until': c.hold_until.isoformat(),
-                }
-                for c in created_commissions
-            ],
-        )
-
-        logger.info(
-            "Commission calculation completed",
-            extra={
-                'sale_id': sale.id,
-                'total_commissions': len(created_commissions),
-                'total_amount_cents': total_amount,
-                'max_depth_reached': current_level - 1,
-            }
-        )
-
-        return created_commissions, summary
-
-t_sale(self, sale: Sale) -> None:
+    def _validate_sale(self, sale: Sale) -> None:
         """
         Validate that a sale is eligible for commission calculation.
 
@@ -418,7 +291,7 @@ t_sale(self, sale: Sale) -> None:
             CommissionCalculationError: If sale is invalid
         """
         if not sale:
-            raise CommissionCalculationError("sale is None")
+            raise CommissionCalculationError("Sale is None")
 
         if not sale.affiliate_id:
             raise CommissionCalculationError(
@@ -442,7 +315,7 @@ t_sale(self, sale: Sale) -> None:
             )
 
     def _has_active_tiers(self, campaign: Campaign) -> bool:
-       """
+        """
         Check if campaign has active CommissionTier records.
 
         Args:
@@ -464,7 +337,8 @@ t_sale(self, sale: Sale) -> None:
         Prioritizes database CommissionTier records over campaign.commission_tiers JSON.
         Returns a dict mapping level -> {rate, bonus_rate, min_referrals_required}.
 
-        Args:            campaign: The Campaign to get rates for
+        Args:
+            campaign: The Campaign to get rates for
 
         Returns:
             Dict mapping level (int) to rate info dict
