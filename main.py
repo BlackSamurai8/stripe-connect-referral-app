@@ -2520,7 +2520,7 @@ DASHBOARD_HTML = """
 
         async function retryDLQ(id) {
             try {
-                await fetch(\`/admin/dead-letter-queue/\${id}/retry\`, {
+                await fetch(`/admin/dead-letter-queue/${id}/retry`, {
                     method: 'POST',
                     headers: getHeaders()
                 });
@@ -2533,7 +2533,7 @@ DASHBOARD_HTML = """
 
         async function resolveDLQ(id) {
             try {
-                await fetch(\`/admin/dead-letter-queue/\${id}/resolve\`, {
+                await fetch(`/admin/dead-letter-queue/${id}/resolve`, {
                     method: 'POST',
                     headers: getHeaders()
                 });
@@ -2568,7 +2568,7 @@ DASHBOARD_HTML = """
 
         function showError(tabName, message) {
             const content = document.getElementById(tabName + 'Content');
-            content.innerHTML = \`<div class="alert alert-error">Error: \${message}</div>\`;
+            content.innerHTML = `<div class="alert alert-error">Error: ${message}</div>`;
         }
 
         // Initialize
