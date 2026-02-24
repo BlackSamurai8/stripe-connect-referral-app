@@ -1031,8 +1031,9 @@ async def ghl_webhook(request: Request, db: Session = Depends(get_db)):
         body = await request.body()
         data = await request.json()
 
-        # Verify HMAC signature if configured
-        if settings.ghl_webhook_secret:
+        # Verify HMAC signature if configured (skip if placeholder values)
+        _skip_hmac = {"placeholder", "skip", "not_needed", "not_needed_yet"}
+        if settings.ghl_webhook_secret and settings.ghl_webhook_secret not in _skip_hmac:
             signature = request.headers.get("x-ghl-signature", "")
             expected = hmac.new(
                 settings.ghl_webhook_secret.encode(),
