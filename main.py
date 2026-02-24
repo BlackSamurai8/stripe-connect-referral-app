@@ -1175,16 +1175,21 @@ async def ghl_webhook(request: Request, db: Session = Depends(get_db)):
         return {"status": "processed"}
 
     except Exception as e:
-        logger.error(f"GHL webhook error: {str(e)}", exc_info=True)
+        error_msg = str(e).replace("{", "{{").replace("}", "}}")
+        logger.error(f"GHL webhook error: {error_msg}", exc_info=True)
 
-        dlq_entry = DeadLetterQueue(
-            event_type="ghl_webhook",
-            source="ghl",
-            error_message=str(e),
-            payload_json={"body": body.decode() if isinstance(body, bytes) else body}
-        )
-        db.add(dlq_entry)
-        db.commit()
+        try:
+            db.rollback()
+            dlq_entry = DeadLetterQueue(
+                event_type="ghl_webhook",
+                source="ghl",
+                error_message=str(e)[:500],
+                payload_json=data if isinstance(data, dict) else {"raw": str(data)[:500]}
+            )
+            db.add(dlq_entry)
+            db.commit()
+        except Exception as dlq_err:
+            logger.error(f"Failed to create DLQ entry: {str(dlq_err)}")
 
         raise HTTPException(status_code=500, detail="Webhook processing failed")
 
