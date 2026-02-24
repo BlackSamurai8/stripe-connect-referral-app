@@ -173,7 +173,10 @@ class DeadLetterQueue(Base):
 class AuditLog(Base):
     __tablename__ = "audit_logs"
     id = Column(String, primary_key=True, default=generate_uuid)
+    entity_type = Column(String, nullable=True)
+    entity_id = Column(String, nullable=True)
     action = Column(String, nullable=False)  # e.g. "payout_run", "commission_approve", "tier_update"
     actor = Column(String, default="system")
+    changes = Column(JSON, nullable=True)
     details_json = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
