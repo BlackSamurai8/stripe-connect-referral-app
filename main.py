@@ -14,7 +14,7 @@ import hashlib
 import hmac
 from fastapi import FastAPI, Header, HTTPException, Depends, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLRespons
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 from loguru import logger
@@ -1103,13 +1103,13 @@ async def ghl_webhook(request: Request, db: Session = Depends(get_db)):
 # ADMIN ENDPOINTS (all require API key auth)
 # ===========================================================================
 
-def verify_admin_api_key(api_key: str = Header(None)):
+def verify_admin_api_key(x_api_key: str = Header(None)):
     """Verify admin API key."""
-    if not api_key:
+    if not x_api_key:
         raise HTTPException(status_code=401, detail="API key required")
-    if api_key != settings.admin_api_key:
+    if x_api_key != settings.admin_api_key:
         raise HTTPException(status_code=403, detail="Invalid API key")
-    return api_key
+    return x_api_key
 
 
 @app.get("/admin/stats")
