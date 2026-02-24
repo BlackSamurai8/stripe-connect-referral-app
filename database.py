@@ -2,6 +2,7 @@
 Database session management with model re-exports.
 """
 
+
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from config import get_settings
@@ -10,20 +11,27 @@ from models import (
     CommissionTier, AuditLog, DeadLetterQueue, WebhookEvent, Payout, PayoutStatus
 )
 
+
 settings = get_settings()
+
 
 # For SQLite, need check_same_thread=False for FastAPI's async
 connect_args = {}
 if settings.database_url.startswith("sqlite"):
     connect_args = {"check_same_thread": False}
 
+
 engine = create_engine(settings.database_url, connect_args=connect_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
 
 
 def init_db():
     """Create all tables."""
     Base.metadata.create_all(bind=engine)
+
+
 
 
 def upgrade_db():
@@ -72,6 +80,9 @@ def upgrade_db():
                 "ALTER TABLE affiliates ALTER COLUMN status TYPE VARCHAR USING status::text",
                         "ALTER TABLE commissions ALTER COLUMN status TYPE VARCHAR USING status::text",
                                 "ALTER TABLE payouts ALTER COLUMN status TYPE VARCHAR USING status::text",
+        "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS entity_type VARCHAR",
+        "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS entity_id VARCHAR",
+        "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS changes JSON",
     ]
     with engine.connect() as conn:
         for sql in alterations:
@@ -79,13 +90,3 @@ def upgrade_db():
                 conn.execute(text(sql))
                 conn.commit()
             except Exception:
-                conn.rollback()
-
-
-def get_db():
-    """FastAPI dependency for database sessions."""
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
