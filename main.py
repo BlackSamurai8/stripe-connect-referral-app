@@ -545,10 +545,21 @@ def create_campaign(
     db.add(audit)
     db.commit()
 
-    return {
-        **campaign.__dict__,
-        "commission_tiers": [tier.__dict__ for tier in tiers],
-    }
+    return CampaignResponse(
+        id=campaign.id,
+        name=campaign.name,
+        description=campaign.description,
+        commission_tiers=[
+            {"id": t.id, "campaign_id": t.campaign_id, "level": t.level,
+             "rate": t.rate, "min_referrals_required": t.min_referrals_required,
+             "bonus_rate": t.bonus_rate, "is_active": t.is_active}
+            for t in tiers
+        ],
+        max_depth=campaign.max_depth,
+        hold_days=campaign.hold_days,
+        is_active=campaign.is_active,
+        created_at=campaign.created_at,
+    )
 
 
 @app.get("/campaigns", response_model=List[CampaignResponse])
@@ -563,15 +574,25 @@ def list_campaigns(
 
     campaigns = db.query(Campaign).offset(skip).limit(limit).all()
 
+    def _campaign_to_response(c, tiers):
+        return CampaignResponse(
+            id=c.id, name=c.name, description=c.description,
+            commission_tiers=[
+                {"id": t.id, "campaign_id": t.campaign_id, "level": t.level,
+                 "rate": t.rate, "min_referrals_required": t.min_referrals_required,
+                 "bonus_rate": t.bonus_rate, "is_active": t.is_active}
+                for t in tiers
+            ],
+            max_depth=c.max_depth, hold_days=c.hold_days,
+            is_active=c.is_active, created_at=c.created_at,
+        )
+
     results = []
     for campaign in campaigns:
         tiers = db.query(CommissionTier).filter(
             CommissionTier.campaign_id == campaign.id
         ).all()
-        results.append({
-            **campaign.__dict__,
-            "commission_tiers": [tier.__dict__ for tier in tiers],
-        })
+        results.append(_campaign_to_response(campaign, tiers))
 
     logger.info(f"Retrieved {len(campaigns)} campaigns")
     return results
@@ -598,10 +619,17 @@ def get_campaign(
         CommissionTier.campaign_id == campaign_id
     ).all()
 
-    return {
-        **campaign.__dict__,
-        "commission_tiers": [tier.__dict__ for tier in tiers],
-    }
+    return CampaignResponse(
+        id=campaign.id, name=campaign.name, description=campaign.description,
+        commission_tiers=[
+            {"id": t.id, "campaign_id": t.campaign_id, "level": t.level,
+             "rate": t.rate, "min_referrals_required": t.min_referrals_required,
+             "bonus_rate": t.bonus_rate, "is_active": t.is_active}
+            for t in tiers
+        ],
+        max_depth=campaign.max_depth, hold_days=campaign.hold_days,
+        is_active=campaign.is_active, created_at=campaign.created_at,
+    )
 
 
 @app.put("/campaigns/{campaign_id}", response_model=CampaignResponse)
@@ -647,10 +675,17 @@ def update_campaign(
         CommissionTier.campaign_id == campaign_id
     ).all()
 
-    return {
-        **campaign.__dict__,
-        "commission_tiers": [tier.__dict__ for tier in tiers],
-    }
+    return CampaignResponse(
+        id=campaign.id, name=campaign.name, description=campaign.description,
+        commission_tiers=[
+            {"id": t.id, "campaign_id": t.campaign_id, "level": t.level,
+             "rate": t.rate, "min_referrals_required": t.min_referrals_required,
+             "bonus_rate": t.bonus_rate, "is_active": t.is_active}
+            for t in tiers
+        ],
+        max_depth=campaign.max_depth, hold_days=campaign.hold_days,
+        is_active=campaign.is_active, created_at=campaign.created_at,
+    )
 
 
 # ======================
