@@ -1226,7 +1226,7 @@ async def admin_stats(
             ]
         }
     except Exception as e:
-        logger.error(f"Error fetching admin stats: {str(e)}", exc_info=True)
+        logger.error("Error fetching admin stats: " + str(e))
         raise HTTPException(status_code=500, detail="Failed to fetch stats")
 
 
