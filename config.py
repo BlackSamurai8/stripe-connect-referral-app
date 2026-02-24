@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     # Observability
     log_level: str = "INFO"
     sentry_dsn: str = ""
+    environment: str = "production"
 
     # Dead letter queue
     dlq_max_retries: int = 3

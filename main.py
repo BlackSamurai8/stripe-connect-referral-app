@@ -3,7 +3,7 @@ Stripe Connect Referral App - FastAPI Backend (Part 1)
 Enhanced with commission tiers, audit logging, and advanced error handling.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List
 from contextlib import asynccontextmanager
 
@@ -26,14 +26,17 @@ from database import (
     SessionLocal,
     init_db, upgrade_db,
     Affiliate,
+    AffiliateStatus,
     Campaign,
     CommissionTier,
     AuditLog,
     DeadLetterQueue,
     WebhookEvent,
     Payout,
+    PayoutStatus,
     Sale,
     Commission,
+    CommissionStatus,
 )
 from settings import settings
 from commission_engine import CommissionEngine
@@ -43,19 +46,27 @@ if settings.sentry_dsn:
     sentry_sdk.init(
         dsn=settings.sentry_dsn,
         traces_sample_rate=0.1,
-        environment=settings.environment,
+        environment=getattr(settings, "environment", "production"),
     )
     logger.info("Sentry initialized with DSN")
 
 # Configure loguru for structured logging
 logger.remove()  # Remove default handler
-logger.add(
-    "logs/app.log",
-    format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}",
-    level="INFO",
-    rotation="500 MB",
-    retention="10 days",
-)
+
+# Only add file logging if the logs directory exists or can be created
+import os
+try:
+    os.makedirs("logs", exist_ok=True)
+    logger.add(
+        "logs/app.log",
+        format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}",
+        level="INFO",
+        rotation="500 MB",
+        retention="10 days",
+    )
+except OSError:
+    pass  # Skip file logging in environments where it's not available
+
 logger.add(
     lambda msg: print(msg, end=""),
     format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}",
@@ -274,7 +285,7 @@ def health_check():
     logger.debug("Health check performed")
     return {
         "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "version": "2.0.0",
     }
 
@@ -831,7 +842,7 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
         except ValueError as e:
             logger.error(f"Invalid payload: {e}")
             raise HTTPException(status_code=400, detail="Invalid payload")
-        except stripe.error.SignatureVerificationError as e:
+        except stripe.SignatureVerificationError as e:
             logger.error(f"Invalid signature: {e}")
             raise HTTPException(status_code=400, detail="Invalid signature")
 
@@ -839,11 +850,11 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
         import time
         start_time = time.time()
         webhook_event = WebhookEvent(
+            id=event.id,
             event_type=event.type,
-            provider="stripe",
-            event_id=event.id,
-            raw_data=event,
-            status="received"
+            source="stripe",
+            payload_json=json.loads(body) if isinstance(body, bytes) else body,
+            processed=False,
         )
         db.add(webhook_event)
         db.commit()
@@ -852,18 +863,15 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
         # Process based on event type
         if event.type == "payment_intent.succeeded":
             await _handle_payment_success(event.data.object, db)
-            webhook_event.status = "processed"
+            webhook_event.processed = True
 
         elif event.type == "charge.refunded":
             await _handle_refund(event.data.object, db)
-            webhook_event.status = "processed"
+            webhook_event.processed = True
 
         elif event.type == "account.updated":
             await _handle_account_updated(event.data.object, db)
-            webhook_event.status = "processed"
-
-        else:
-            webhook_event.status = "ignored"
+            webhook_event.processed = True
 
         # Record processing time
         processing_time_ms = int((time.time() - start_time) * 1000)
@@ -879,9 +887,9 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
         # Create DLQ entry
         dlq_entry = DeadLetterQueue(
             event_type="stripe_webhook",
-            provider="stripe",
+            source="stripe",
             error_message=str(e),
-            raw_data={"body": body.decode() if isinstance(body, bytes) else body}
+            payload_json={"body": body.decode() if isinstance(body, bytes) else body}
         )
         db.add(dlq_entry)
         db.commit()
@@ -906,29 +914,36 @@ async def _handle_payment_success(payment_intent, db: Session):
             logger.warning(f"Affiliate not found for referral_code: {referral_code}")
             return
 
+        # Extract campaign_id from metadata
+        campaign_id = payment_intent.metadata.get("campaign_id")
+        if not campaign_id:
+            # Fallback: use the first active campaign
+            campaign = db.query(Campaign).filter(Campaign.is_active == True).first()
+            if not campaign:
+                logger.warning("No active campaign found for payment")
+                return
+            campaign_id = campaign.id
+
         # Create sale record
         sale = Sale(
             affiliate_id=affiliate.id,
-            payment_intent_id=payment_intent.id,
+            campaign_id=campaign_id,
+            stripe_payment_intent_id=payment_intent.id,
             amount_cents=payment_intent.amount,
             currency=payment_intent.currency.upper(),
             customer_email=payment_intent.receipt_email or "",
-            status="completed"
         )
         db.add(sale)
         db.flush()  # Get the sale ID
 
         # Use CommissionEngine to calculate and create commissions
         engine = CommissionEngine(db)
-        commissions = engine.calculate_commissions(affiliate, sale.amount_cents)
+        commissions, summary = engine.calculate_commissions(sale)
 
-        for commission in commissions:
-            commission.sale_id = sale.id
-            db.add(commission)
-
-        # Update affiliate stats
-        affiliate.total_sales += 1
-        affiliate.total_revenue_cents += sale.amount_cents
+        logger.info(
+            f"Commission calculation complete: {summary.total_commissions_count} commissions, "
+            f"total {summary.total_amount_cents} cents"
+        )
 
         db.commit()
         logger.info(f"Created sale {sale.id} for affiliate {affiliate.id}: {sale.amount_cents} cents")
@@ -947,28 +962,26 @@ async def _handle_refund(charge, db: Session):
             logger.warning("Refund charge missing payment_intent")
             return
 
-        # Find sale
+        # Find sale by stripe_payment_intent_id (correct field name)
         sale = db.query(Sale).filter(
-            Sale.payment_intent_id == payment_intent_id
+            Sale.stripe_payment_intent_id == payment_intent_id
         ).first()
         if not sale:
             logger.warning(f"Sale not found for payment_intent: {payment_intent_id}")
             return
 
-        # Cancel all commissions for this sale
+        # Cancel all commissions for this sale (use enum, not string)
         commissions = db.query(Commission).filter(
             Commission.sale_id == sale.id,
-            Commission.status != "cancelled"
+            Commission.status != CommissionStatus.CANCELLED
         ).all()
 
         for commission in commissions:
-            commission.status = "cancelled"
-            commission.cancelled_at = datetime.utcnow()
+            commission.status = CommissionStatus.CANCELLED
 
-        sale.status = "refunded"
         db.commit()
 
-        logger.info(f"Refunded sale {sale.id} and {len(commissions)} commissions")
+        logger.info(f"Refunded sale {sale.id} and cancelled {len(commissions)} commissions")
 
     except Exception as e:
         logger.error(f"Error handling refund: {str(e)}", exc_info=True)
@@ -1018,18 +1031,24 @@ async def ghl_webhook(request: Request, db: Session = Depends(get_db)):
         body = await request.body()
         data = await request.json()
 
-        # Optional: Verify HMAC signature if configured
+        # Verify HMAC signature if configured
         if settings.ghl_webhook_secret:
             signature = request.headers.get("x-ghl-signature", "")
-            # Implement HMAC verification here if needed
+            expected = hmac.new(
+                settings.ghl_webhook_secret.encode(),
+                body,
+                hashlib.sha256
+            ).hexdigest()
+            if not hmac.compare_digest(signature, expected):
+                logger.error("GHL webhook signature verification failed")
+                raise HTTPException(status_code=400, detail="Invalid signature")
 
         # Record webhook event
         webhook_event = WebhookEvent(
             event_type=data.get("type", "unknown"),
-            provider="ghl",
-            event_id=data.get("id", ""),
-            raw_data=data,
-            status="received"
+            source="ghl",
+            payload_json=data,
+            processed=False,
         )
         db.add(webhook_event)
         db.commit()
@@ -1044,7 +1063,6 @@ async def ghl_webhook(request: Request, db: Session = Depends(get_db)):
 
         if not referral_code or not amount:
             logger.warning("GHL webhook missing required fields")
-            webhook_event.status = "ignored"
             db.commit()
             return {"status": "ignored"}
 
@@ -1054,34 +1072,39 @@ async def ghl_webhook(request: Request, db: Session = Depends(get_db)):
         ).first()
         if not affiliate:
             logger.warning(f"Affiliate not found for referral_code: {referral_code}")
-            webhook_event.status = "ignored"
             db.commit()
             return {"status": "ignored"}
+
+        # Resolve campaign_id
+        if not campaign_id:
+            campaign = db.query(Campaign).filter(Campaign.is_active == True).first()
+            if not campaign:
+                logger.warning("No active campaign found for GHL order")
+                return {"status": "ignored"}
+            campaign_id = campaign.id
 
         # Create sale from GHL order
         sale = Sale(
             affiliate_id=affiliate.id,
-            payment_intent_id=order_id,
+            campaign_id=campaign_id,
+            ghl_order_id=order_id,
             amount_cents=int(float(amount) * 100),
             currency="USD",
             customer_email=data.get("customer_email", ""),
-            status="completed"
         )
         db.add(sale)
         db.flush()
 
         # Calculate commissions
         engine = CommissionEngine(db)
-        commissions = engine.calculate_commissions(affiliate, sale.amount_cents)
+        commissions, summary = engine.calculate_commissions(sale)
 
-        for commission in commissions:
-            commission.sale_id = sale.id
-            db.add(commission)
+        logger.info(
+            f"GHL commission calculation complete: {summary.total_commissions_count} commissions, "
+            f"total {summary.total_amount_cents} cents"
+        )
 
-        affiliate.total_sales += 1
-        affiliate.total_revenue_cents += sale.amount_cents
-
-        webhook_event.status = "processed"
+        webhook_event.processed = True
         db.commit()
 
         logger.info(f"GHL webhook processed: sale {sale.id} for affiliate {affiliate.id}")
@@ -1092,9 +1115,9 @@ async def ghl_webhook(request: Request, db: Session = Depends(get_db)):
 
         dlq_entry = DeadLetterQueue(
             event_type="ghl_webhook",
-            provider="ghl",
+            source="ghl",
             error_message=str(e),
-            raw_data={"body": body.decode() if isinstance(body, bytes) else body}
+            payload_json={"body": body.decode() if isinstance(body, bytes) else body}
         )
         db.add(dlq_entry)
         db.commit()
@@ -1173,7 +1196,7 @@ async def admin_stats(
 
         # DLQ stats
         dlq_pending = db.query(DeadLetterQueue).filter(
-            DeadLetterQueue.resolved_at == None
+            DeadLetterQueue.resolved == False
         ).count()
 
         # Recent errors
@@ -1210,9 +1233,9 @@ async def admin_stats(
                 {
                     "id": e.id,
                     "event_type": e.event_type,
-                    "provider": e.provider,
-                    "status": e.status,
-                    "created_at": e.created_at.isoformat()
+                    "source": e.source,
+                    "processed": e.processed,
+                    "created_at": e.created_at.isoformat() if e.created_at else None,
                 } for e in recent_webhooks
             ],
             "dlq_pending_count": dlq_pending,
@@ -1249,8 +1272,8 @@ async def run_payouts(
 
         # Find APPROVED commissions past hold_until
         commissions = db.query(Commission).filter(
-            Commission.status == "approved",
-            Commission.hold_until <= datetime.utcnow()
+            Commission.status == CommissionStatus.APPROVED,
+            Commission.hold_until <= datetime.now(timezone.utc)
         ).all()
 
         summary["approved"] = len(commissions)
@@ -1259,8 +1282,8 @@ async def run_payouts(
             try:
                 # Get affiliate
                 affiliate = commission.affiliate
-                if not affiliate.stripe_account_id:
-                    logger.warning(f"Affiliate {affiliate.id} has no stripe account")
+                if not affiliate or not affiliate.stripe_account_id:
+                    logger.warning(f"Affiliate {commission.affiliate_id} has no stripe account")
                     summary["skipped"] += 1
                     continue
 
@@ -1269,10 +1292,15 @@ async def run_payouts(
                     summary["skipped"] += 1
                     continue
 
+                # Get currency from sale
+                currency = "usd"
+                if commission.sale:
+                    currency = commission.sale.currency or "usd"
+
                 # Create Stripe transfer
                 transfer = stripe.Transfer.create(
                     amount=int(commission.amount_cents),
-                    currency="usd",
+                    currency=currency.lower(),
                     destination=affiliate.stripe_account_id,
                     metadata={
                         "commission_id": commission.id,
@@ -1283,16 +1311,16 @@ async def run_payouts(
                 # Create payout record
                 payout = Payout(
                     affiliate_id=affiliate.id,
-                    commission_id=commission.id,
                     amount_cents=commission.amount_cents,
                     stripe_transfer_id=transfer.id,
-                    status="completed"
+                    status=PayoutStatus.COMPLETED,
                 )
                 db.add(payout)
 
                 # Update commission
-                commission.status = "paid"
-                commission.paid_at = datetime.utcnow()
+                commission.status = CommissionStatus.PAID
+                commission.paid_at = datetime.now(timezone.utc)
+                commission.stripe_transfer_id = transfer.id
 
                 summary["paid"] += 1
                 summary["total_amount_cents"] += commission.amount_cents
@@ -1305,9 +1333,9 @@ async def run_payouts(
 
         # Log to audit log
         audit = AuditLog(
-            admin_id=1,  # Default admin
             action="run_payouts",
-            details={
+            actor="admin",
+            details_json={
                 "summary": summary
             }
         )
@@ -1330,7 +1358,7 @@ async def get_dlq(
     """List dead letter queue entries (unresolved first)."""
     try:
         entries = db.query(DeadLetterQueue).order_by(
-            DeadLetterQueue.resolved_at.is_(None).desc(),
+            DeadLetterQueue.resolved.asc(),
             DeadLetterQueue.created_at.desc()
         ).all()
 
@@ -1338,10 +1366,10 @@ async def get_dlq(
             {
                 "id": e.id,
                 "event_type": e.event_type,
-                "provider": e.provider,
+                "source": e.source,
                 "error_message": e.error_message,
-                "created_at": e.created_at.isoformat(),
-                "resolved_at": e.resolved_at.isoformat() if e.resolved_at else None,
+                "created_at": e.created_at.isoformat() if e.created_at else None,
+                "resolved": e.resolved,
                 "retry_count": e.retry_count
             } for e in entries
         ]
@@ -1365,13 +1393,13 @@ async def retry_dlq_entry(
             raise HTTPException(status_code=404, detail="DLQ entry not found")
 
         entry.retry_count += 1
-        entry.last_retry_at = datetime.utcnow()
+        entry.next_retry_at = datetime.now(timezone.utc)
 
         # Log retry
         audit = AuditLog(
-            admin_id=1,
             action="retry_dlq_entry",
-            details={"dlq_id": dlq_id, "retry_count": entry.retry_count}
+            actor="admin",
+            details_json={"dlq_id": dlq_id, "retry_count": entry.retry_count}
         )
         db.add(audit)
         db.commit()
@@ -1398,13 +1426,13 @@ async def resolve_dlq_entry(
         if not entry:
             raise HTTPException(status_code=404, detail="DLQ entry not found")
 
-        entry.resolved_at = datetime.utcnow()
+        entry.resolved = True
 
         # Log resolution
         audit = AuditLog(
-            admin_id=1,
             action="resolve_dlq_entry",
-            details={"dlq_id": dlq_id}
+            actor="admin",
+            details_json={"dlq_id": dlq_id}
         )
         db.add(audit)
         db.commit()
@@ -1431,10 +1459,12 @@ async def get_audit_log(
         return [
             {
                 "id": e.id,
-                "admin_id": e.admin_id,
+                "actor": e.actor,
                 "action": e.action,
-                "details": e.details,
-                "created_at": e.created_at.isoformat()
+                "entity_type": e.entity_type,
+                "entity_id": e.entity_id,
+                "details": e.details_json,
+                "created_at": e.created_at.isoformat() if e.created_at else None,
             } for e in entries
         ]
     except Exception as e:
@@ -2228,7 +2258,7 @@ DASHBOARD_HTML = """
                         <thead>
                             <tr>
                                 <th>Type</th>
-                                <th>Provider</th>
+                                <th>Source</th>
                                 <th>Status</th>
                                 <th>Timestamp</th>
                             </tr>
@@ -2237,8 +2267,8 @@ DASHBOARD_HTML = """
                             ${stats.webhook_events.map(e => `
                                 <tr>
                                     <td>${e.event_type}</td>
-                                    <td>${e.provider}</td>
-                                    <td><span class="badge badge-${e.status === 'processed' ? 'success' : e.status === 'received' ? 'info' : 'warning'}">${e.status}</span></td>
+                                    <td>${e.source}</td>
+                                    <td><span class="badge badge-${e.processed ? 'success' : 'warning'}">${e.processed ? 'processed' : 'pending'}</span></td>
                                     <td>${formatDate(e.created_at)}</td>
                                 </tr>
                             `).join('')}
@@ -2459,7 +2489,7 @@ DASHBOARD_HTML = """
                         <thead>
                             <tr>
                                 <th>Type</th>
-                                <th>Provider</th>
+                                <th>Source</th>
                                 <th>Status</th>
                                 <th>ID</th>
                                 <th>Timestamp</th>
@@ -2469,8 +2499,8 @@ DASHBOARD_HTML = """
                             ${stats.webhook_events.map(e => `
                                 <tr>
                                     <td>${e.event_type}</td>
-                                    <td>${e.provider}</td>
-                                    <td><span class="badge badge-${e.status === 'processed' ? 'success' : e.status === 'received' ? 'info' : 'warning'}">${e.status}</span></td>
+                                    <td>${e.source}</td>
+                                    <td><span class="badge badge-${e.processed ? 'success' : 'warning'}">${e.processed ? 'processed' : 'pending'}</span></td>
                                     <td><code>${e.id}</code></td>
                                     <td>${formatDate(e.created_at)}</td>
                                 </tr>
@@ -2559,7 +2589,7 @@ DASHBOARD_HTML = """
                             <div class="timeline-time">${formatDate(e.created_at)}</div>
                             <div class="timeline-action"><strong>${e.action}</strong></div>
                             <div style="font-size: 12px; color: #666; margin-top: 4px;">
-                                Admin #${e.admin_id}
+                                ${e.actor || 'system'}
                             </div>
                         </div>
                     `).join('')}

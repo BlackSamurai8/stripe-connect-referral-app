@@ -30,15 +30,25 @@ class PayoutService:
             db.query(Commission)
             .filter(
                 Commission.status == CommissionStatus.PENDING,
-                Commission.payable_after <= now,
+                Commission.hold_until <= now,
             )
             .all()
         )
 
         count = 0
         for commission in pending:
-            # Verify the sale wasn't refunded
-            if commission.sale and commission.sale.is_refunded:
+            # Verify the sale wasn't refunded by checking if any commissions
+            # on this sale have already been cancelled/refunded
+            sale_cancelled = (
+                commission.sale and
+                db.query(Commission)
+                .filter(
+                    Commission.sale_id == commission.sale_id,
+                    Commission.status == CommissionStatus.CANCELLED,
+                )
+                .first() is not None
+            )
+            if sale_cancelled:
                 commission.status = CommissionStatus.REFUNDED
             else:
                 commission.status = CommissionStatus.APPROVED
@@ -66,14 +76,19 @@ class PayoutService:
 
             if not affiliate or not affiliate.stripe_account_id:
                 commission.status = CommissionStatus.FAILED
-                commission.error_message = "Affiliate has no Stripe account"
                 results["skipped"] += 1
+                logger.warning(f"Skipping commission {commission.id}: affiliate has no Stripe account")
                 continue
+
+            # Get currency from the associated sale, default to "usd"
+            currency = "usd"
+            if commission.sale:
+                currency = commission.sale.currency or "usd"
 
             try:
                 transfer = stripe.Transfer.create(
                     amount=commission.amount_cents,
-                    currency=commission.currency,
+                    currency=currency.lower(),
                     destination=affiliate.stripe_account_id,
                     metadata={
                         "commission_id": commission.id,
@@ -96,7 +111,6 @@ class PayoutService:
 
             except stripe.StripeError as e:
                 commission.status = CommissionStatus.FAILED
-                commission.error_message = str(e)
                 results["failed"] += 1
                 logger.error(f"Failed to pay commission {commission.id}: {e}")
 
