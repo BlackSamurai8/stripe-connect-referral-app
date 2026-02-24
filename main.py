@@ -2436,6 +2436,35 @@ DASHBOARD_HTML = """
         </div>
     </div>
 
+    <!-- Create Affiliate Modal -->
+    <div class="modal" id="affiliateModal">
+        <div class="modal-content" style="position:relative;">
+            <span class="modal-close" onclick="closeAffiliateModal()">&times;</span>
+            <div class="modal-header">Create New Affiliate</div>
+            <form onsubmit="saveAffiliate(event)">
+                <div class="form-group">
+                    <label>Name *</label>
+                    <input type="text" id="affName" required placeholder="e.g. John Smith">
+                </div>
+                <div class="form-group">
+                    <label>Email *</label>
+                    <input type="email" id="affEmail" required placeholder="e.g. john@example.com">
+                </div>
+                <div class="form-group">
+                    <label>Phone</label>
+                    <input type="tel" id="affPhone" placeholder="e.g. +1234567890">
+                </div>
+                <div class="form-group">
+                    <label>Parent Referral Code</label>
+                    <input type="text" id="affParentCode" placeholder="e.g. KG23MNAO (leave blank if root)">
+                </div>
+                <div id="affError" class="alert alert-error" style="display:none;"></div>
+                <div id="affSuccess" class="alert alert-success" style="display:none;"></div>
+                <button type="submit" class="btn btn-primary" id="affSubmitBtn" style="width:100%;">Create Affiliate</button>
+            </form>
+        </div>
+    </div>
+
     <!-- Add Tier Modal -->
     <div class="modal" id="tierModal">
         <div class="modal-content" style="position:relative;">
@@ -2673,6 +2702,8 @@ DASHBOARD_HTML = """
             const affiliates = await resp.json();
 
             let html = `
+                <button class="btn btn-primary" onclick="showAffiliateModal()">+ Create Affiliate</button>
+                <br><br>
                 <div class="table-container">
                     <table>
                         <thead>
@@ -2680,8 +2711,8 @@ DASHBOARD_HTML = """
                                 <th>Name</th>
                                 <th>Email</th>
                                 <th>Referral Code</th>
+                                <th>Parent</th>
                                 <th>Status</th>
-                                <th>Depth</th>
                                 <th>Stripe Connected</th>
                                 <th>Actions</th>
                             </tr>
@@ -2692,8 +2723,8 @@ DASHBOARD_HTML = """
                                     <td>${a.name}</td>
                                     <td>${a.email}</td>
                                     <td><code>${a.referral_code}</code></td>
+                                    <td>${a.parent_id ? '<span style="font-size:0.85em;color:#636e72;">'+a.parent_id.substring(0,8)+'...</span>' : '<span class="badge badge-warning">Root</span>'}</td>
                                     <td><span class="badge badge-${a.status === 'active' ? 'success' : a.status === 'pending' ? 'warning' : 'danger'}">${a.status}</span></td>
-                                    <td>${a.depth}</td>
                                     <td><span class="badge badge-${a.stripe_onboarding_complete ? 'success' : 'warning'}">${a.stripe_onboarding_complete ? 'Yes' : 'No'}</span></td>
                                     <td>${a.stripe_onboarding_complete
                                         ? '<span class="badge badge-success">Connected</span>'
@@ -2732,6 +2763,66 @@ DASHBOARD_HTML = """
                 await loadAffiliates();
             } catch (err) {
                 alert('Error: ' + err.message);
+            }
+        }
+
+        // Create Affiliate modal
+        function showAffiliateModal() {
+            document.getElementById('affName').value = '';
+            document.getElementById('affEmail').value = '';
+            document.getElementById('affPhone').value = '';
+            document.getElementById('affParentCode').value = '';
+            document.getElementById('affError').style.display = 'none';
+            document.getElementById('affSuccess').style.display = 'none';
+            document.getElementById('affSubmitBtn').disabled = false;
+            document.getElementById('affSubmitBtn').textContent = 'Create Affiliate';
+            document.getElementById('affiliateModal').classList.add('active');
+        }
+
+        function closeAffiliateModal() {
+            document.getElementById('affiliateModal').classList.remove('active');
+        }
+
+        async function saveAffiliate(e) {
+            e.preventDefault();
+            const errorEl = document.getElementById('affError');
+            const successEl = document.getElementById('affSuccess');
+            const submitBtn = document.getElementById('affSubmitBtn');
+            errorEl.style.display = 'none';
+            successEl.style.display = 'none';
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Creating...';
+
+            const payload = {
+                name: document.getElementById('affName').value.trim(),
+                email: document.getElementById('affEmail').value.trim(),
+            };
+            const phone = document.getElementById('affPhone').value.trim();
+            if (phone) payload.phone = phone;
+            const parentCode = document.getElementById('affParentCode').value.trim();
+            if (parentCode) payload.parent_referral_code = parentCode;
+
+            try {
+                const resp = await fetch('/affiliates', {
+                    method: 'POST',
+                    headers: getHeaders(),
+                    body: JSON.stringify(payload),
+                });
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    throw new Error(err.detail || 'Failed to create affiliate');
+                }
+                const data = await resp.json();
+                successEl.innerHTML = `Affiliate created! Referral code: <strong>${data.referral_code}</strong>`;
+                successEl.style.display = 'block';
+                submitBtn.textContent = 'Created!';
+                await loadAffiliates();
+                setTimeout(() => closeAffiliateModal(), 2000);
+            } catch (err) {
+                errorEl.textContent = err.message;
+                errorEl.style.display = 'block';
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Create Affiliate';
             }
         }
 
