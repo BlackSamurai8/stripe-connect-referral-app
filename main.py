@@ -1522,6 +1522,7 @@ async def approve_commissions(
     count = 0
     for commission in pending:
         commission.status = CommissionStatus.APPROVED
+        commission.hold_until = datetime.now(timezone.utc)  # Clear hold period
         count += 1
 
     db.commit()
@@ -1546,10 +1547,9 @@ async def run_payouts(
             "total_amount_cents": 0
         }
 
-        # Find APPROVED commissions past hold_until
+        # Find APPROVED commissions ready for payout
         commissions = db.query(Commission).filter(
-            Commission.status == CommissionStatus.APPROVED,
-            Commission.hold_until <= datetime.now(timezone.utc)
+            Commission.status == CommissionStatus.APPROVED
         ).all()
 
         summary["approved"] = len(commissions)
