@@ -25,6 +25,7 @@ import time
 from database import (
     SessionLocal,
     init_db, upgrade_db,
+    Base,
     Affiliate,
     AffiliateStatus,
     Campaign,
@@ -288,6 +289,19 @@ def health_check():
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "version": "2.0.0",
     }
+
+
+@app.post("/admin/reset-db")
+def reset_database(
+    api_key: str = Depends(verify_admin_api_key),
+):
+    """Drop and recreate all tables. WARNING: Destroys all data."""
+    from database import engine
+    logger.warning("DATABASE RESET: Dropping and recreating all tables")
+    Base.metadata.drop_all(bind=engine)
+    Base.metadata.create_all(bind=engine)
+    logger.info("DATABASE RESET: All tables recreated successfully")
+    return {"status": "ok", "message": "All tables dropped and recreated"}
 
 
 # ======================
