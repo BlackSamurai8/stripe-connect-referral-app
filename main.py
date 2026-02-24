@@ -293,7 +293,7 @@ def health_check():
 
 @app.post("/admin/reset-db")
 def reset_database(
-    api_key: str = Depends(verify_admin_api_key),
+    api_key: str = Depends(verify_api_key),
 ):
     """Drop and recreate all tables. WARNING: Destroys all data."""
     from database import engine
