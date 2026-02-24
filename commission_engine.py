@@ -431,6 +431,7 @@ class CommissionEngine:
                     affiliate_id=record.affiliate_id,
                     level=record.level,
                     rate=record.rate,
+                    percentage=record.rate * 100,  # e.g. 0.10 -> 10.0
                     amount_cents=record.amount_cents,
                     status=CommissionStatus.PENDING,
                     hold_until=record.hold_until,
