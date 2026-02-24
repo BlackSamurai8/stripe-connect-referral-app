@@ -505,6 +505,7 @@ def create_campaign(
     campaign = Campaign(
         name=campaign_data.name,
         description=campaign_data.description,
+        commission_tiers=campaign_data.commission_tiers,
         max_depth=campaign_data.max_depth,
         hold_days=campaign_data.hold_days,
     )
@@ -1056,13 +1057,14 @@ async def ghl_webhook(request: Request, db: Session = Depends(get_db)):
         db.add(webhook_event)
         db.commit()
 
-        # Extract GHL order data
+        # Extract GHL order data (support both flat and nested custom_fields formats)
         contact_id = data.get("contact_id")
         order_id = data.get("order_id")
         amount = data.get("amount")
         custom_fields = data.get("custom_fields", {})
-        referral_code = custom_fields.get("referral_code")
-        campaign_id = custom_fields.get("campaign_id")
+        referral_code = data.get("referral_code") or custom_fields.get("referral_code")
+        campaign_id = data.get("campaign_id") or custom_fields.get("campaign_id")
+        customer_email = data.get("customer_email") or data.get("email")
 
         if not referral_code or not amount:
             logger.warning("GHL webhook missing required fields")
