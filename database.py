@@ -63,6 +63,7 @@ def upgrade_db():
         "ALTER TABLE webhook_events ADD COLUMN IF NOT EXISTS processing_time_ms INTEGER",
         "ALTER TABLE webhook_events ADD COLUMN IF NOT EXISTS error_message TEXT",
         "ALTER TABLE webhook_events ADD COLUMN IF NOT EXISTS retry_count INTEGER DEFAULT 0",
+                "ALTER TABLE webhook_events ADD COLUMN IF NOT EXISTS payload_json JSON",
         "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS details_json JSON",
                 "ALTER TABLE affiliates ALTER COLUMN status TYPE VARCHAR USING status::text",
                         "ALTER TABLE commissions ALTER COLUMN status TYPE VARCHAR USING status::text",
