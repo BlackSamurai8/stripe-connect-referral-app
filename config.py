@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     # GoHighLevel
     ghl_api_key: str
     ghl_webhook_secret: str = ""
+    ghl_location_id: str = ""
 
     # Database
     database_url: str = "sqlite:///./referral_app.db"

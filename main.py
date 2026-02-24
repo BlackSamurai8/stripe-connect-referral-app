@@ -41,6 +41,13 @@ from database import (
 )
 from settings import settings
 from commission_engine import CommissionEngine
+from ghl_service import GHLService
+
+# Initialize GHL service
+ghl = GHLService(
+    api_key=settings.ghl_api_key,
+    location_id=getattr(settings, "ghl_location_id", ""),
+)
 
 # Configure Sentry if DSN is provided
 if settings.sentry_dsn:
@@ -1544,8 +1551,13 @@ async def run_payouts(
             "paid": 0,
             "failed": 0,
             "skipped": 0,
-            "total_amount_cents": 0
+            "total_amount_cents": 0,
+            "ghl_notified": 0,
+            "ghl_skipped": 0,
         }
+
+        # Track which affiliates got paid (for GHL notification)
+        paid_affiliate_ids = set()
 
         # Find APPROVED commissions ready for payout
         commissions = db.query(Commission).filter(
@@ -1600,6 +1612,7 @@ async def run_payouts(
 
                 summary["paid"] += 1
                 summary["total_amount_cents"] += commission.amount_cents
+                paid_affiliate_ids.add(affiliate.id)
 
                 logger.info(f"Paid commission {commission.id} to affiliate {affiliate.id}")
 
@@ -1617,6 +1630,64 @@ async def run_payouts(
         )
         db.add(audit)
         db.commit()
+
+        # --- Notify GHL for each affiliate that received a payout ---
+        for affiliate_id in paid_affiliate_ids:
+            try:
+                affiliate = db.query(Affiliate).filter(Affiliate.id == affiliate_id).first()
+                if not affiliate or not affiliate.ghl_contact_id:
+                    summary["ghl_skipped"] += 1
+                    continue
+
+                # Calculate lifetime totals for this affiliate
+                total_paid = db.query(Commission).filter(
+                    Commission.affiliate_id == affiliate_id,
+                    Commission.status == CommissionStatus.PAID,
+                ).all()
+                total_earned_cents = sum(c.amount_cents for c in total_paid)
+
+                # Pending balance
+                pending = db.query(Commission).filter(
+                    Commission.affiliate_id == affiliate_id,
+                    Commission.status.in_([CommissionStatus.PENDING, CommissionStatus.APPROVED]),
+                ).all()
+                pending_balance_cents = sum(c.amount_cents for c in pending)
+
+                # Most recent payout amount (from this run)
+                latest_payouts = db.query(Payout).filter(
+                    Payout.affiliate_id == affiliate_id,
+                    Payout.status == PayoutStatus.COMPLETED,
+                ).order_by(Payout.created_at.desc()).first()
+
+                last_payout_cents = latest_payouts.amount_cents if latest_payouts else 0
+
+                # Update GHL contact
+                updated = await ghl.update_contact_earnings(
+                    ghl_contact_id=affiliate.ghl_contact_id,
+                    total_earned_cents=total_earned_cents,
+                    last_payout_cents=last_payout_cents,
+                    last_payout_date=datetime.now(timezone.utc),
+                    pending_balance_cents=pending_balance_cents,
+                    affiliate_status=affiliate.status.value if hasattr(affiliate.status, 'value') else str(affiliate.status),
+                )
+
+                # Also add a note to the contact
+                if updated:
+                    await ghl.add_note(
+                        ghl_contact_id=affiliate.ghl_contact_id,
+                        body=(
+                            f"Referral payout processed: ${last_payout_cents / 100:.2f}\n"
+                            f"Lifetime earnings: ${total_earned_cents / 100:.2f}\n"
+                            f"Pending balance: ${pending_balance_cents / 100:.2f}"
+                        ),
+                    )
+                    summary["ghl_notified"] += 1
+                else:
+                    summary["ghl_skipped"] += 1
+
+            except Exception as e:
+                logger.error(f"GHL notification failed for affiliate {affiliate_id}: {e}")
+                summary["ghl_skipped"] += 1
 
         logger.info(f"Payout run completed: {summary}")
         return summary
@@ -2508,6 +2579,10 @@ DASHBOARD_HTML = """
                     <label>Parent Referral Code</label>
                     <input type="text" id="affParentCode" placeholder="e.g. KG23MNAO (leave blank if root)">
                 </div>
+                <div class="form-group">
+                    <label>GHL Contact ID</label>
+                    <input type="text" id="affGhlContactId" placeholder="e.g. abc123 (links to GHL for payout notifications)">
+                </div>
                 <div id="affError" class="alert alert-error" style="display:none;"></div>
                 <div id="affSuccess" class="alert alert-success" style="display:none;"></div>
                 <button type="submit" class="btn btn-primary" id="affSubmitBtn" style="width:100%;">Create Affiliate</button>
@@ -2762,8 +2837,9 @@ DASHBOARD_HTML = """
                                 <th>Email</th>
                                 <th>Referral Code</th>
                                 <th>Parent</th>
+                                <th>GHL</th>
                                 <th>Status</th>
-                                <th>Stripe Connected</th>
+                                <th>Stripe</th>
                                 <th>Actions</th>
                             </tr>
                         </thead>
@@ -2774,6 +2850,7 @@ DASHBOARD_HTML = """
                                     <td>${a.email}</td>
                                     <td><code>${a.referral_code}</code></td>
                                     <td>${a.parent_id ? '<span style="font-size:0.85em;color:#636e72;">'+a.parent_id.substring(0,8)+'...</span>' : '<span class="badge badge-warning">Root</span>'}</td>
+                                    <td>${a.ghl_contact_id ? '<span class="badge badge-success">Linked</span>' : '<span class="badge badge-warning">-</span>'}</td>
                                     <td><span class="badge badge-${a.status === 'active' ? 'success' : a.status === 'pending' ? 'warning' : 'danger'}">${a.status}</span></td>
                                     <td><span class="badge badge-${a.stripe_onboarding_complete ? 'success' : 'warning'}">${a.stripe_onboarding_complete ? 'Yes' : 'No'}</span></td>
                                     <td>${a.stripe_onboarding_complete
@@ -2822,6 +2899,7 @@ DASHBOARD_HTML = """
             document.getElementById('affEmail').value = '';
             document.getElementById('affPhone').value = '';
             document.getElementById('affParentCode').value = '';
+            document.getElementById('affGhlContactId').value = '';
             document.getElementById('affError').style.display = 'none';
             document.getElementById('affSuccess').style.display = 'none';
             document.getElementById('affSubmitBtn').disabled = false;
@@ -2851,6 +2929,8 @@ DASHBOARD_HTML = """
             if (phone) payload.phone = phone;
             const parentCode = document.getElementById('affParentCode').value.trim();
             if (parentCode) payload.parent_referral_code = parentCode;
+            const ghlId = document.getElementById('affGhlContactId').value.trim();
+            if (ghlId) payload.ghl_contact_id = ghlId;
 
             try {
                 const resp = await fetch('/affiliates', {
