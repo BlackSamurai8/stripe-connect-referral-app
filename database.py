@@ -39,6 +39,26 @@ def upgrade_db():
             conn.commit()
         except Exception:
             conn.rollback()
+        try:
+            conn.execute(text("ALTER TABLE affiliates ADD COLUMN IF NOT EXISTS ghl_contact_id VARCHAR"))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+        try:
+            conn.execute(text("ALTER TABLE sales ADD COLUMN IF NOT EXISTS customer_email VARCHAR"))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+        try:
+            conn.execute(text("ALTER TABLE sales ADD COLUMN IF NOT EXISTS ghl_order_id VARCHAR"))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+        try:
+            conn.execute(text("ALTER TABLE sales ADD COLUMN IF NOT EXISTS metadata_json JSON"))
+            conn.commit()
+        except Exception:
+            conn.rollback()
 
 
 def get_db():
