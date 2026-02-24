@@ -2361,7 +2361,7 @@ DASHBOARD_HTML = """
                 <div class="nav-section-title">Navigation</div>
                 <div class="nav-item active" onclick="switchTab('overview')">📊 Overview</div>
                 <div class="nav-item" onclick="switchTab('affiliates')">👥 Affiliates</div>
-                <div class="nav-item" onclick="switchTab('campaigns')">🎯 Campaigns</div>
+                <div class="nav-item" onclick="switchTab('campaigns')">🎯 Commission Structures</div>
                 <div class="nav-item" onclick="switchTab('tiers')">📈 Commission Tiers</div>
                 <div class="nav-item" onclick="switchTab('payouts')">💰 Payouts</div>
             </div>
@@ -2436,6 +2436,56 @@ DASHBOARD_HTML = """
         </div>
     </div>
 
+    <!-- Create Commission Structure Modal -->
+    <div class="modal" id="structureModal">
+        <div class="modal-content" style="position:relative;">
+            <span class="modal-close" onclick="closeStructureModal()">&times;</span>
+            <div class="modal-header">Create Commission Structure</div>
+            <form onsubmit="saveStructure(event)">
+                <div class="form-group">
+                    <label>Name *</label>
+                    <input type="text" id="structName" required placeholder="e.g. Standard Referral Program">
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <input type="text" id="structDesc" placeholder="e.g. 10% L1, 5% L2, 2% L3">
+                </div>
+                <div class="form-group">
+                    <label>Max Depth (levels)</label>
+                    <input type="number" id="structMaxDepth" min="1" max="10" value="5">
+                </div>
+                <div class="form-group">
+                    <label>Hold Days (before payout eligible)</label>
+                    <input type="number" id="structHoldDays" min="0" max="90" value="14">
+                </div>
+                <div class="form-group">
+                    <label>Commission Tiers</label>
+                    <div id="structTiersContainer">
+                        <div class="tier-row" style="display:flex;gap:8px;margin-bottom:6px;align-items:center;">
+                            <span style="min-width:50px;font-size:0.9em;color:#636e72;">Level 1</span>
+                            <input type="number" step="0.1" min="0" max="100" value="10" placeholder="%" style="flex:1;" class="struct-tier-rate">
+                            <span style="font-size:0.9em;">%</span>
+                        </div>
+                        <div class="tier-row" style="display:flex;gap:8px;margin-bottom:6px;align-items:center;">
+                            <span style="min-width:50px;font-size:0.9em;color:#636e72;">Level 2</span>
+                            <input type="number" step="0.1" min="0" max="100" value="5" placeholder="%" style="flex:1;" class="struct-tier-rate">
+                            <span style="font-size:0.9em;">%</span>
+                        </div>
+                        <div class="tier-row" style="display:flex;gap:8px;margin-bottom:6px;align-items:center;">
+                            <span style="min-width:50px;font-size:0.9em;color:#636e72;">Level 3</span>
+                            <input type="number" step="0.1" min="0" max="100" value="2" placeholder="%" style="flex:1;" class="struct-tier-rate">
+                            <span style="font-size:0.9em;">%</span>
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-sm" onclick="addTierRow()" style="margin-top:4px;font-size:0.85em;">+ Add Level</button>
+                </div>
+                <div id="structError" class="alert alert-error" style="display:none;"></div>
+                <div id="structSuccess" class="alert alert-success" style="display:none;"></div>
+                <button type="submit" class="btn btn-primary" id="structSubmitBtn" style="width:100%;">Create Structure</button>
+            </form>
+        </div>
+    </div>
+
     <!-- Create Affiliate Modal -->
     <div class="modal" id="affiliateModal">
         <div class="modal-content" style="position:relative;">
@@ -2472,9 +2522,9 @@ DASHBOARD_HTML = """
             <div class="modal-header">Add Commission Tier</div>
             <form onsubmit="saveTier(event)">
                 <div class="form-group">
-                    <label>Campaign</label>
+                    <label>Commission Structure</label>
                     <select id="tierCampaignId" required>
-                        <option value="">Select a campaign...</option>
+                        <option value="">Select a commission structure...</option>
                     </select>
                 </div>
                 <div class="form-group">
@@ -2543,7 +2593,7 @@ DASHBOARD_HTML = """
             const titles = {
                 'overview': '📊 Overview',
                 'affiliates': '👥 Affiliates',
-                'campaigns': '🎯 Campaigns',
+                'campaigns': '🎯 Commission Structures',
                 'tiers': '📈 Commission Tiers',
                 'payouts': '💰 Payouts',
                 'webhooks': '🔔 Webhook Events',
@@ -2826,20 +2876,134 @@ DASHBOARD_HTML = """
             }
         }
 
-        // Campaigns tab
+        // Commission Structure modal
+        function showStructureModal() {
+            document.getElementById('structName').value = '';
+            document.getElementById('structDesc').value = '';
+            document.getElementById('structMaxDepth').value = '5';
+            document.getElementById('structHoldDays').value = '14';
+            document.getElementById('structError').style.display = 'none';
+            document.getElementById('structSuccess').style.display = 'none';
+            document.getElementById('structSubmitBtn').disabled = false;
+            document.getElementById('structSubmitBtn').textContent = 'Create Structure';
+            // Reset tiers to default 3 levels
+            document.getElementById('structTiersContainer').innerHTML = `
+                <div class="tier-row" style="display:flex;gap:8px;margin-bottom:6px;align-items:center;">
+                    <span style="min-width:50px;font-size:0.9em;color:#636e72;">Level 1</span>
+                    <input type="number" step="0.1" min="0" max="100" value="10" placeholder="%" style="flex:1;" class="struct-tier-rate">
+                    <span style="font-size:0.9em;">%</span>
+                </div>
+                <div class="tier-row" style="display:flex;gap:8px;margin-bottom:6px;align-items:center;">
+                    <span style="min-width:50px;font-size:0.9em;color:#636e72;">Level 2</span>
+                    <input type="number" step="0.1" min="0" max="100" value="5" placeholder="%" style="flex:1;" class="struct-tier-rate">
+                    <span style="font-size:0.9em;">%</span>
+                </div>
+                <div class="tier-row" style="display:flex;gap:8px;margin-bottom:6px;align-items:center;">
+                    <span style="min-width:50px;font-size:0.9em;color:#636e72;">Level 3</span>
+                    <input type="number" step="0.1" min="0" max="100" value="2" placeholder="%" style="flex:1;" class="struct-tier-rate">
+                    <span style="font-size:0.9em;">%</span>
+                </div>
+            `;
+            document.getElementById('structureModal').classList.add('active');
+        }
+
+        function closeStructureModal() {
+            document.getElementById('structureModal').classList.remove('active');
+        }
+
+        function addTierRow() {
+            const container = document.getElementById('structTiersContainer');
+            const rows = container.querySelectorAll('.tier-row');
+            const nextLevel = rows.length + 1;
+            const div = document.createElement('div');
+            div.className = 'tier-row';
+            div.style = 'display:flex;gap:8px;margin-bottom:6px;align-items:center;';
+            div.innerHTML = `
+                <span style="min-width:50px;font-size:0.9em;color:#636e72;">Level ${nextLevel}</span>
+                <input type="number" step="0.1" min="0" max="100" value="1" placeholder="%" style="flex:1;" class="struct-tier-rate">
+                <span style="font-size:0.9em;">%</span>
+            `;
+            container.appendChild(div);
+        }
+
+        async function saveStructure(e) {
+            e.preventDefault();
+            const errorEl = document.getElementById('structError');
+            const successEl = document.getElementById('structSuccess');
+            const submitBtn = document.getElementById('structSubmitBtn');
+            errorEl.style.display = 'none';
+            successEl.style.display = 'none';
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Creating...';
+
+            // Gather tier rates
+            const rateInputs = document.querySelectorAll('.struct-tier-rate');
+            const tiers = [];
+            rateInputs.forEach((input, idx) => {
+                const rate = parseFloat(input.value);
+                if (rate > 0) {
+                    tiers.push({ level: idx + 1, rate: rate / 100 });
+                }
+            });
+
+            if (tiers.length === 0) {
+                errorEl.textContent = 'Please add at least one commission tier with a rate > 0';
+                errorEl.style.display = 'block';
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Create Structure';
+                return;
+            }
+
+            const payload = {
+                name: document.getElementById('structName').value.trim(),
+                description: document.getElementById('structDesc').value.trim() || null,
+                commission_tiers: tiers,
+                max_depth: parseInt(document.getElementById('structMaxDepth').value) || 5,
+                hold_days: parseInt(document.getElementById('structHoldDays').value) || 14,
+            };
+
+            try {
+                const resp = await fetch('/campaigns', {
+                    method: 'POST',
+                    headers: getHeaders(),
+                    body: JSON.stringify(payload),
+                });
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    throw new Error(err.detail || 'Failed to create commission structure');
+                }
+                const data = await resp.json();
+                successEl.innerHTML = `Commission structure "<strong>${data.name}</strong>" created!`;
+                successEl.style.display = 'block';
+                submitBtn.textContent = 'Created!';
+                await loadCampaigns();
+                setTimeout(() => closeStructureModal(), 2000);
+            } catch (err) {
+                errorEl.textContent = err.message;
+                errorEl.style.display = 'block';
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Create Structure';
+            }
+        }
+
+        // Commission Structures tab
         async function loadCampaigns() {
             const resp = await fetch('/campaigns', { headers: getHeaders() });
             const campaigns = await resp.json();
 
             let html = `
+                <button class="btn btn-primary" onclick="showStructureModal()">+ Create Commission Structure</button>
+                <br><br>
                 <div class="table-container">
                     <table>
                         <thead>
                             <tr>
                                 <th>Name</th>
-                                <th>Status</th>
+                                <th>Description</th>
+                                <th>Tiers</th>
                                 <th>Max Depth</th>
                                 <th>Hold Days</th>
+                                <th>Status</th>
                                 <th>Created</th>
                             </tr>
                         </thead>
@@ -2847,9 +3011,13 @@ DASHBOARD_HTML = """
                             ${campaigns.map(c => `
                                 <tr>
                                     <td><strong>${c.name}</strong></td>
-                                    <td><span class="badge badge-${c.is_active ? 'success' : 'warning'}">${c.is_active ? 'Active' : 'Inactive'}</span></td>
+                                    <td>${c.description || '-'}</td>
+                                    <td>${c.commission_tiers && c.commission_tiers.length > 0
+                                        ? c.commission_tiers.map(t => 'L' + t.level + ': ' + (t.rate * 100).toFixed(0) + '%').join(', ')
+                                        : '-'}</td>
                                     <td>${c.max_depth}</td>
                                     <td>${c.hold_days}</td>
+                                    <td><span class="badge badge-${c.is_active ? 'success' : 'warning'}">${c.is_active ? 'Active' : 'Inactive'}</span></td>
                                     <td>${formatDate(c.created_at)}</td>
                                 </tr>
                             `).join('')}
@@ -2873,7 +3041,7 @@ DASHBOARD_HTML = """
                     <table>
                         <thead>
                             <tr>
-                                <th>Campaign</th>
+                                <th>Commission Structure</th>
                                 <th>Level</th>
                                 <th>Rate</th>
                                 <th>Min Referrals</th>
@@ -2902,7 +3070,7 @@ DASHBOARD_HTML = """
 
         async function showTierModal() {
             const select = document.getElementById('tierCampaignId');
-            select.innerHTML = '<option value="">Select a campaign...</option>';
+            select.innerHTML = '<option value="">Select a commission structure...</option>';
             try {
                 const resp = await fetch('/campaigns', { headers: getHeaders() });
                 const campaigns = await resp.json();
@@ -2910,7 +3078,7 @@ DASHBOARD_HTML = """
                     select.innerHTML += `<option value="${c.id}">${c.name}</option>`;
                 });
             } catch (e) {
-                select.innerHTML = '<option value="">Failed to load campaigns</option>';
+                select.innerHTML = '<option value="">Failed to load commission structures</option>';
             }
             document.getElementById('tierLevel').value = '';
             document.getElementById('tierRate').value = '';
