@@ -10,11 +10,18 @@ from sqlalchemy import (
 from sqlalchemy.orm import declarative_base, relationship, Session
 import enum
 import uuid
+import secrets
+import string
 
 Base = declarative_base()
 
 def generate_uuid():
     return str(uuid.uuid4())
+
+def generate_referral_code():
+    """Generate a unique 8-character alphanumeric referral code."""
+    chars = string.ascii_uppercase + string.digits
+    return ''.join(secrets.choice(chars) for _ in range(8))
 
 class AffiliateStatus(str, enum.Enum):
     PENDING = "pending"
@@ -44,10 +51,10 @@ class Affiliate(Base):
     phone = Column(String, nullable=True)
     parent_id = Column(String, ForeignKey("affiliates.id"), nullable=True, index=True)
     depth = Column(Integer, default=0)
-    referral_code = Column(String, unique=True, nullable=False, index=True)
+    referral_code = Column(String, unique=True, nullable=False, index=True, default=generate_referral_code)
     stripe_account_id = Column(String, nullable=True)
     stripe_onboarding_complete = Column(Boolean, default=False)
-    status = Column(String, default="pending")
+    status = Column(SAEnum(AffiliateStatus), default=AffiliateStatus.PENDING)
     ghl_contact_id = Column(String, nullable=True, index=True)
     metadata_json = Column(JSON, default=dict)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
@@ -97,7 +104,7 @@ class Commission(Base):
     level = Column(Integer, nullable=False)
     rate = Column(Float, nullable=False)
     amount_cents = Column(Integer, nullable=False)
-    status = Column(String, default="pending")
+    status = Column(SAEnum(CommissionStatus), default=CommissionStatus.PENDING)
     hold_until = Column(DateTime, nullable=True)
     paid_at = Column(DateTime, nullable=True)
     stripe_transfer_id = Column(String, nullable=True)
@@ -113,7 +120,7 @@ class Payout(Base):
     amount_cents = Column(Integer, nullable=False)
     currency = Column(String, default="usd")
     stripe_transfer_id = Column(String, nullable=True)
-    status = Column(String, default="pending")
+    status = Column(SAEnum(PayoutStatus), default=PayoutStatus.PENDING)
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     completed_at = Column(DateTime, nullable=True)
@@ -160,7 +167,6 @@ class DeadLetterQueue(Base):
     max_retries = Column(Integer, default=3)
     next_retry_at = Column(DateTime, nullable=True)
     resolved = Column(Boolean, default=False)
-    resolved_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
