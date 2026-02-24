@@ -505,6 +505,7 @@ def get_affiliate_earnings(
 @app.post("/affiliates/{affiliate_id}/onboarding-link")
 def create_onboarding_link(
     affiliate_id: str,
+    request: Request,
     db = Depends(get_db),
     api_key: str = Depends(verify_api_key),
 ):
@@ -543,7 +544,10 @@ def create_onboarding_link(
 
     # Generate Account Link for onboarding
     try:
-        base_url = settings.app_base_url.rstrip("/")
+        # Auto-detect base URL from the incoming request, fall back to settings
+        base_url = str(request.base_url).rstrip("/")
+        if base_url == "http://localhost" or "localhost" in base_url:
+            base_url = settings.app_base_url.rstrip("/")
         account_link = stripe.AccountLink.create(
             account=affiliate.stripe_account_id,
             refresh_url=f"{base_url}/affiliates/{affiliate_id}/onboarding-refresh",
