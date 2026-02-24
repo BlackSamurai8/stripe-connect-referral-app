@@ -1051,6 +1051,75 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail="Webhook processing failed")
 
 
+@app.post("/webhooks/stripe-connect")
+async def stripe_connect_webhook(request: Request, db: Session = Depends(get_db)):
+    """
+    Handle incoming Stripe Connect webhook events (from connected accounts).
+    Uses the separate connect webhook secret for signature verification.
+    Supports both v1 (account.updated) and v2 (v2.core.account.updated) event names.
+    """
+    try:
+        body = await request.body()
+        signature = request.headers.get("stripe-signature", "")
+
+        # Verify webhook signature with Connect-specific secret
+        try:
+            event = stripe.Webhook.construct_event(
+                body, signature, settings.stripe_connect_webhook_secret
+            )
+        except ValueError as e:
+            logger.error(f"Connect webhook invalid payload: {e}")
+            raise HTTPException(status_code=400, detail="Invalid payload")
+        except stripe.SignatureVerificationError as e:
+            logger.error(f"Connect webhook invalid signature: {e}")
+            raise HTTPException(status_code=400, detail="Invalid signature")
+
+        # Record webhook event
+        import time
+        start_time = time.time()
+        webhook_event = WebhookEvent(
+            id=event.id,
+            event_type=event.type,
+            source="stripe-connect",
+            payload_json=json.loads(body) if isinstance(body, bytes) else body,
+            processed=False,
+        )
+        db.add(webhook_event)
+        db.commit()
+        db.refresh(webhook_event)
+
+        # Process based on event type (handle both v1 and v2 event names)
+        if event.type in ("account.updated", "v2.core.account.updated"):
+            # For v2 events, the data structure may differ
+            account_data = event.data.object if hasattr(event.data, 'object') else event.data
+            await _handle_account_updated(account_data, db)
+            webhook_event.processed = True
+
+        # Record processing time
+        processing_time_ms = int((time.time() - start_time) * 1000)
+        webhook_event.processing_time_ms = processing_time_ms
+        db.commit()
+
+        logger.info(f"Stripe Connect webhook {event.type} processed in {processing_time_ms}ms")
+        return {"status": "received"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Connect webhook processing error: {str(e)}", exc_info=True)
+
+        dlq_entry = DeadLetterQueue(
+            event_type=f"stripe_connect_webhook",
+            source="stripe-connect",
+            error_message=str(e),
+            payload_json={"body": body.decode() if isinstance(body, bytes) else body}
+        )
+        db.add(dlq_entry)
+        db.commit()
+
+        raise HTTPException(status_code=500, detail="Webhook processing failed")
+
+
 async def _handle_payment_success(payment_intent, db: Session):
     """Process a successful payment intent."""
     try:
