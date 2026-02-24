@@ -198,6 +198,7 @@ async def lifespan(app: FastAPI):
     """Manage application startup and shutdown."""
     logger.info("Application startup: Initializing commission engine and resources")
     # Startup logic
+    stripe.api_key = settings.stripe_secret_key
     init_db()
     upgrade_db()
     yield
@@ -507,7 +508,7 @@ def create_onboarding_link(
     db = Depends(get_db),
     api_key: str = Depends(verify_api_key),
 ):
-    """Create a Stripe onboarding link for an affiliate."""
+    """Create a Stripe Connect Express account and onboarding link for an affiliate."""
     logger.info(f"Creating Stripe onboarding link for affiliate: {affiliate_id}")
 
     affiliate = db.query(Affiliate).filter(Affiliate.id == affiliate_id).first()
@@ -518,13 +519,88 @@ def create_onboarding_link(
             detail="Affiliate not found",
         )
 
-    # Placeholder for Stripe Connect account creation
-    logger.info(f"Onboarding link generated for {affiliate_id}")
+    # Create Stripe Express account if affiliate doesn't have one yet
+    if not affiliate.stripe_account_id:
+        try:
+            account = stripe.Account.create(
+                type="express",
+                email=affiliate.email,
+                metadata={
+                    "affiliate_id": affiliate.id,
+                    "referral_code": affiliate.referral_code,
+                },
+            )
+            affiliate.stripe_account_id = account.id
+            affiliate.status = AffiliateStatus.ONBOARDING
+            db.commit()
+            logger.info(f"Created Stripe Express account {account.id} for affiliate {affiliate_id}")
+        except stripe.StripeError as e:
+            logger.error(f"Failed to create Stripe account for {affiliate_id}: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Stripe error: {str(e)}",
+            )
 
-    return {
-        "affiliate_id": affiliate_id,
-        "onboarding_url": "https://connect.stripe.com/onboarding/...",
-    }
+    # Generate Account Link for onboarding
+    try:
+        base_url = settings.app_base_url.rstrip("/")
+        account_link = stripe.AccountLink.create(
+            account=affiliate.stripe_account_id,
+            refresh_url=f"{base_url}/affiliates/{affiliate_id}/onboarding-refresh",
+            return_url=f"{base_url}/affiliates/{affiliate_id}/onboarding-complete",
+            type="account_onboarding",
+        )
+        logger.info(f"Onboarding link generated for {affiliate_id}")
+
+        # Log audit event
+        audit = AuditLog(
+            entity_type="Affiliate",
+            entity_id=affiliate.id,
+            action="ONBOARDING_LINK_CREATED",
+            changes={"stripe_account_id": affiliate.stripe_account_id},
+        )
+        db.add(audit)
+        db.commit()
+
+        return {
+            "affiliate_id": affiliate_id,
+            "stripe_account_id": affiliate.stripe_account_id,
+            "onboarding_url": account_link.url,
+            "expires_at": account_link.expires_at,
+        }
+    except stripe.StripeError as e:
+        logger.error(f"Failed to create onboarding link for {affiliate_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Stripe error: {str(e)}",
+        )
+
+
+@app.get("/affiliates/{affiliate_id}/onboarding-complete")
+def onboarding_complete(affiliate_id: str, db = Depends(get_db)):
+    """Return URL after affiliate completes Stripe onboarding."""
+    affiliate = db.query(Affiliate).filter(Affiliate.id == affiliate_id).first()
+    if not affiliate:
+        return HTMLResponse("<h1>Affiliate not found</h1>", status_code=404)
+
+    return HTMLResponse(f"""
+    <html><body style="font-family:sans-serif;text-align:center;padding:60px;">
+    <h1>Onboarding Complete!</h1>
+    <p>Thank you, {affiliate.name}. Your Stripe account has been connected.</p>
+    <p>You will start receiving payouts for your referral commissions.</p>
+    </body></html>
+    """)
+
+
+@app.get("/affiliates/{affiliate_id}/onboarding-refresh")
+def onboarding_refresh(affiliate_id: str, db = Depends(get_db)):
+    """Redirect affiliate back to get a fresh onboarding link if the previous one expired."""
+    return HTMLResponse(f"""
+    <html><body style="font-family:sans-serif;text-align:center;padding:60px;">
+    <h1>Link Expired</h1>
+    <p>Your onboarding link has expired. Please contact your administrator to get a new one.</p>
+    </body></html>
+    """)
 
 
 # ======================
@@ -1084,6 +1160,8 @@ async def _handle_account_updated(account, db: Session):
 
         if charges_enabled and payouts_enabled:
             affiliate.stripe_onboarding_complete = True
+            if affiliate.status == AffiliateStatus.ONBOARDING:
+                affiliate.status = AffiliateStatus.ACTIVE
         else:
             affiliate.stripe_onboarding_complete = False
 
@@ -2490,6 +2568,7 @@ DASHBOARD_HTML = """
                                 <th>Status</th>
                                 <th>Depth</th>
                                 <th>Stripe Connected</th>
+                                <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -2501,6 +2580,10 @@ DASHBOARD_HTML = """
                                     <td><span class="badge badge-${a.status === 'active' ? 'success' : a.status === 'pending' ? 'warning' : 'danger'}">${a.status}</span></td>
                                     <td>${a.depth}</td>
                                     <td><span class="badge badge-${a.stripe_onboarding_complete ? 'success' : 'warning'}">${a.stripe_onboarding_complete ? 'Yes' : 'No'}</span></td>
+                                    <td>${a.stripe_onboarding_complete
+                                        ? '<span class="badge badge-success">Connected</span>'
+                                        : `<button class="btn btn-primary btn-sm" onclick="generateOnboardingLink('${a.id}')">Onboard to Stripe</button>`
+                                    }</td>
                                 </tr>
                             `).join('')}
                         </tbody>
@@ -2509,6 +2592,32 @@ DASHBOARD_HTML = """
             `;
 
             document.getElementById('affiliatesContent').innerHTML = html;
+        }
+
+        async function generateOnboardingLink(affiliateId) {
+            try {
+                const resp = await fetch(`/affiliates/${affiliateId}/onboarding-link`, {
+                    method: 'POST',
+                    headers: getHeaders(),
+                });
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    throw new Error(err.detail || 'Failed to generate onboarding link');
+                }
+                const data = await resp.json();
+                // Show the onboarding URL in a prompt so admin can copy/send it
+                const url = data.onboarding_url;
+                if (confirm(`Onboarding link generated!\\n\\nURL: ${url}\\n\\nClick OK to copy to clipboard.`)) {
+                    navigator.clipboard.writeText(url).then(() => {
+                        alert('Link copied to clipboard! Send this to the affiliate.');
+                    }).catch(() => {
+                        prompt('Copy this onboarding link:', url);
+                    });
+                }
+                await loadAffiliates();
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
         }
 
         // Campaigns tab
