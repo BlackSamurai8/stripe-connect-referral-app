@@ -2243,6 +2243,40 @@ DASHBOARD_HTML = """
         </div>
     </div>
 
+    <!-- Add Tier Modal -->
+    <div class="modal" id="tierModal">
+        <div class="modal-content" style="position:relative;">
+            <span class="modal-close" onclick="closeTierModal()">&times;</span>
+            <div class="modal-header">Add Commission Tier</div>
+            <form onsubmit="saveTier(event)">
+                <div class="form-group">
+                    <label>Campaign</label>
+                    <select id="tierCampaignId" required>
+                        <option value="">Select a campaign...</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Level</label>
+                    <input type="number" id="tierLevel" min="1" required placeholder="e.g. 1, 2, 3">
+                </div>
+                <div class="form-group">
+                    <label>Rate (%)</label>
+                    <input type="number" id="tierRate" step="0.1" min="0" max="100" required placeholder="e.g. 10.0">
+                </div>
+                <div class="form-group">
+                    <label>Min Referrals Required</label>
+                    <input type="number" id="tierMinReferrals" min="0" value="0">
+                </div>
+                <div class="form-group">
+                    <label>Bonus Rate (%)</label>
+                    <input type="number" id="tierBonusRate" step="0.1" min="0" max="100" value="0">
+                </div>
+                <div id="tierError" class="alert alert-error" style="display:none;"></div>
+                <button type="submit" class="btn btn-primary" id="tierSubmitBtn" style="width:100%;">Create Tier</button>
+            </form>
+        </div>
+    </div>
+
     <script>
         // API Key management
         function getApiKey() {
@@ -2551,8 +2585,65 @@ DASHBOARD_HTML = """
             document.getElementById('tiersContent').innerHTML = html;
         }
 
-        function showTierModal() {
-            alert('Add tier modal - implement in tier modal');
+        async function showTierModal() {
+            const select = document.getElementById('tierCampaignId');
+            select.innerHTML = '<option value="">Select a campaign...</option>';
+            try {
+                const resp = await fetch('/campaigns', { headers: getHeaders() });
+                const campaigns = await resp.json();
+                campaigns.forEach(c => {
+                    select.innerHTML += `<option value="${c.id}">${c.name}</option>`;
+                });
+            } catch (e) {
+                select.innerHTML = '<option value="">Failed to load campaigns</option>';
+            }
+            document.getElementById('tierLevel').value = '';
+            document.getElementById('tierRate').value = '';
+            document.getElementById('tierMinReferrals').value = '0';
+            document.getElementById('tierBonusRate').value = '0';
+            document.getElementById('tierError').style.display = 'none';
+            document.getElementById('tierSubmitBtn').disabled = false;
+            document.getElementById('tierModal').classList.add('active');
+        }
+
+        function closeTierModal() {
+            document.getElementById('tierModal').classList.remove('active');
+        }
+
+        async function saveTier(e) {
+            e.preventDefault();
+            const errorEl = document.getElementById('tierError');
+            const submitBtn = document.getElementById('tierSubmitBtn');
+            errorEl.style.display = 'none';
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Creating...';
+
+            const payload = {
+                campaign_id: document.getElementById('tierCampaignId').value,
+                level: parseInt(document.getElementById('tierLevel').value),
+                rate: parseFloat(document.getElementById('tierRate').value) / 100,
+                min_referrals_required: parseInt(document.getElementById('tierMinReferrals').value) || 0,
+                bonus_rate: parseFloat(document.getElementById('tierBonusRate').value) / 100 || 0,
+            };
+
+            try {
+                const resp = await fetch('/commission-tiers', {
+                    method: 'POST',
+                    headers: getHeaders(),
+                    body: JSON.stringify(payload),
+                });
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    throw new Error(err.detail || 'Failed to create tier');
+                }
+                closeTierModal();
+                await loadTiers();
+            } catch (err) {
+                errorEl.textContent = err.message;
+                errorEl.style.display = 'block';
+                submitBtn.disabled = false;
+            }
+            submitBtn.textContent = 'Create Tier';
         }
 
         // Payouts tab
