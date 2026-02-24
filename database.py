@@ -2,7 +2,6 @@
 Database session management with model re-exports.
 """
 
-
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from config import get_settings
@@ -25,13 +24,18 @@ engine = create_engine(settings.database_url, connect_args=connect_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
-
-
 def init_db():
     """Create all tables."""
     Base.metadata.create_all(bind=engine)
 
 
+def get_db():
+    """FastAPI dependency for database sessions."""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 def upgrade_db():
@@ -71,15 +75,15 @@ def upgrade_db():
         "ALTER TABLE webhook_events ADD COLUMN IF NOT EXISTS processing_time_ms INTEGER",
         "ALTER TABLE webhook_events ADD COLUMN IF NOT EXISTS error_message TEXT",
         "ALTER TABLE webhook_events ADD COLUMN IF NOT EXISTS retry_count INTEGER DEFAULT 0",
-                "ALTER TABLE webhook_events ADD COLUMN IF NOT EXISTS payload_json JSON",
-                        "ALTER TABLE webhook_events ADD COLUMN IF NOT EXISTS processed BOOLEAN DEFAULT false",
-                                "ALTER TABLE webhook_events ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT now()",
-                                        "ALTER TABLE webhook_events ADD COLUMN IF NOT EXISTS source VARCHAR",
-                                                "ALTER TABLE webhook_events ADD COLUMN IF NOT EXISTS event_type VARCHAR",
+        "ALTER TABLE webhook_events ADD COLUMN IF NOT EXISTS payload_json JSON",
+        "ALTER TABLE webhook_events ADD COLUMN IF NOT EXISTS processed BOOLEAN DEFAULT false",
+        "ALTER TABLE webhook_events ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT now()",
+        "ALTER TABLE webhook_events ADD COLUMN IF NOT EXISTS source VARCHAR",
+        "ALTER TABLE webhook_events ADD COLUMN IF NOT EXISTS event_type VARCHAR",
         "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS details_json JSON",
-                "ALTER TABLE affiliates ALTER COLUMN status TYPE VARCHAR USING status::text",
-                        "ALTER TABLE commissions ALTER COLUMN status TYPE VARCHAR USING status::text",
-                                "ALTER TABLE payouts ALTER COLUMN status TYPE VARCHAR USING status::text",
+        "ALTER TABLE affiliates ALTER COLUMN status TYPE VARCHAR USING status::text",
+        "ALTER TABLE commissions ALTER COLUMN status TYPE VARCHAR USING status::text",
+        "ALTER TABLE payouts ALTER COLUMN status TYPE VARCHAR USING status::text",
         "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS entity_type VARCHAR",
         "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS entity_id VARCHAR",
         "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS changes JSON",
@@ -90,3 +94,4 @@ def upgrade_db():
                 conn.execute(text(sql))
                 conn.commit()
             except Exception:
+                conn.rollback()
