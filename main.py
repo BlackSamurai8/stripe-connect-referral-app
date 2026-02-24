@@ -1506,6 +1506,29 @@ async def admin_stats(
         raise HTTPException(status_code=500, detail="Failed to fetch stats")
 
 
+@app.post("/admin/approve-commissions")
+async def approve_commissions(
+    api_key: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db)
+):
+    """
+    Approve all pending commissions (bypasses hold period).
+    Useful for testing and manual override.
+    """
+    pending = db.query(Commission).filter(
+        Commission.status == CommissionStatus.PENDING
+    ).all()
+
+    count = 0
+    for commission in pending:
+        commission.status = CommissionStatus.APPROVED
+        count += 1
+
+    db.commit()
+    logger.info(f"Force-approved {count} commissions")
+    return {"approved": count}
+
+
 @app.post("/admin/run-payouts")
 async def run_payouts(
     api_key: str = Depends(verify_admin_api_key),
