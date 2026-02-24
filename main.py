@@ -358,6 +358,30 @@ def create_affiliate(
     return affiliate
 
 
+@app.put("/affiliates/{affiliate_id}/status")
+def update_affiliate_status(
+    affiliate_id: str,
+    status_update: dict,
+    db = Depends(get_db),
+    api_key: str = Depends(verify_api_key),
+):
+    """Update an affiliate's status (e.g. pending -> active)."""
+    affiliate = db.query(Affiliate).filter(Affiliate.id == affiliate_id).first()
+    if not affiliate:
+        raise HTTPException(status_code=404, detail="Affiliate not found")
+
+    new_status = status_update.get("status")
+    try:
+        affiliate.status = AffiliateStatus(new_status)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid status: {new_status}")
+
+    db.commit()
+    db.refresh(affiliate)
+    logger.info(f"Affiliate {affiliate_id} status updated to {new_status}")
+    return {"id": affiliate.id, "status": affiliate.status.value}
+
+
 @app.get("/affiliates", response_model=List[AffiliateResponse])
 def list_affiliates(
     skip: int = 0,
