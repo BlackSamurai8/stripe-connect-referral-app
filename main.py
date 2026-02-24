@@ -582,10 +582,29 @@ def create_onboarding_link(
 
 @app.get("/affiliates/{affiliate_id}/onboarding-complete")
 def onboarding_complete(affiliate_id: str, db = Depends(get_db)):
-    """Return URL after affiliate completes Stripe onboarding."""
+    """Return URL after affiliate completes Stripe onboarding.
+    Also verifies account status with Stripe and updates affiliate accordingly."""
     affiliate = db.query(Affiliate).filter(Affiliate.id == affiliate_id).first()
     if not affiliate:
         return HTMLResponse("<h1>Affiliate not found</h1>", status_code=404)
+
+    # Verify account status directly with Stripe
+    if affiliate.stripe_account_id:
+        try:
+            account = stripe.Account.retrieve(affiliate.stripe_account_id)
+            charges_enabled = account.get("charges_enabled", False)
+            payouts_enabled = account.get("payouts_enabled", False)
+
+            if charges_enabled and payouts_enabled:
+                affiliate.stripe_onboarding_complete = True
+                if affiliate.status in (AffiliateStatus.PENDING, AffiliateStatus.ONBOARDING):
+                    affiliate.status = AffiliateStatus.ACTIVE
+                db.commit()
+                logger.info(f"Affiliate {affiliate_id} onboarding verified: ACTIVE")
+            else:
+                logger.info(f"Affiliate {affiliate_id} onboarding incomplete: charges={charges_enabled}, payouts={payouts_enabled}")
+        except Exception as e:
+            logger.error(f"Error verifying Stripe account for {affiliate_id}: {e}")
 
     return HTMLResponse(f"""
     <html><body style="font-family:sans-serif;text-align:center;padding:60px;">
