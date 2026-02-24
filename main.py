@@ -23,7 +23,7 @@ import time
 # Import database models
 from database import (
     SessionLocal,
-    init_db,
+    init_db, upgrade_db,
     Affiliate,
     Campaign,
     CommissionTier,
@@ -185,6 +185,8 @@ async def lifespan(app: FastAPI):
     """Manage application startup and shutdown."""
     logger.info("Application startup: Initializing commission engine and resources")
     # Startup logic
+    init_db()
+    upgrade_db()
     yield
     # Shutdown logic
     logger.info("Application shutdown: Cleaning up resources")

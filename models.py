@@ -160,6 +160,7 @@ class DeadLetterQueue(Base):
     max_retries = Column(Integer, default=3)
     next_retry_at = Column(DateTime, nullable=True)
     resolved = Column(Boolean, default=False)
+    resolved_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
