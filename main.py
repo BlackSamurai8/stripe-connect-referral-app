@@ -1044,7 +1044,9 @@ async def ghl_webhook(request: Request, db: Session = Depends(get_db)):
                 raise HTTPException(status_code=400, detail="Invalid signature")
 
         # Record webhook event
+        import uuid
         webhook_event = WebhookEvent(
+            id=f"ghl_{uuid.uuid4().hex[:24]}",
             event_type=data.get("type", "unknown"),
             source="ghl",
             payload_json=data,
@@ -1470,6 +1472,59 @@ async def get_audit_log(
     except Exception as e:
         logger.error(f"Error fetching audit log: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to fetch audit log")
+
+
+@app.get("/admin/payouts")
+async def list_payouts(
+    api_key: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db)
+):
+    """List all payouts."""
+    try:
+        payouts = db.query(Payout).order_by(Payout.created_at.desc()).limit(100).all()
+        return [
+            {
+                "id": p.id,
+                "affiliate_id": p.affiliate_id,
+                "amount_cents": p.amount_cents,
+                "currency": p.currency,
+                "stripe_transfer_id": p.stripe_transfer_id,
+                "status": p.status.value if hasattr(p.status, 'value') else str(p.status),
+                "error_message": p.error_message,
+                "created_at": p.created_at.isoformat() if p.created_at else None,
+                "completed_at": p.completed_at.isoformat() if p.completed_at else None,
+            } for p in payouts
+        ]
+    except Exception as e:
+        logger.error(f"Error fetching payouts: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to fetch payouts")
+
+
+@app.get("/admin/commission-tiers")
+async def list_all_commission_tiers(
+    api_key: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db)
+):
+    """List all commission tiers across all campaigns."""
+    try:
+        tiers = db.query(CommissionTier).order_by(
+            CommissionTier.campaign_id, CommissionTier.level
+        ).all()
+        return [
+            {
+                "id": t.id,
+                "campaign_id": t.campaign_id,
+                "level": t.level,
+                "rate": t.rate,
+                "min_referrals_required": t.min_referrals_required,
+                "bonus_rate": t.bonus_rate,
+                "is_active": t.is_active,
+                "created_at": t.created_at.isoformat() if t.created_at else None,
+            } for t in tiers
+        ]
+    except Exception as e:
+        logger.error(f"Error fetching commission tiers: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to fetch commission tiers")
 
 
 # ===========================================================================
@@ -2316,10 +2371,10 @@ DASHBOARD_HTML = """
                             <tr>
                                 <th>Name</th>
                                 <th>Email</th>
-                                <th>Code</th>
+                                <th>Referral Code</th>
                                 <th>Status</th>
-                                <th>Sales</th>
-                                <th>Revenue</th>
+                                <th>Depth</th>
+                                <th>Stripe Connected</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -2329,8 +2384,8 @@ DASHBOARD_HTML = """
                                     <td>${a.email}</td>
                                     <td><code>${a.referral_code}</code></td>
                                     <td><span class="badge badge-${a.status === 'active' ? 'success' : a.status === 'pending' ? 'warning' : 'danger'}">${a.status}</span></td>
-                                    <td>${a.total_sales}</td>
-                                    <td>${formatCurrency(a.total_revenue_cents)}</td>
+                                    <td>${a.depth}</td>
+                                    <td><span class="badge badge-${a.stripe_onboarding_complete ? 'success' : 'warning'}">${a.stripe_onboarding_complete ? 'Yes' : 'No'}</span></td>
                                 </tr>
                             `).join('')}
                         </tbody>
@@ -2353,7 +2408,8 @@ DASHBOARD_HTML = """
                             <tr>
                                 <th>Name</th>
                                 <th>Status</th>
-                                <th>Commission Type</th>
+                                <th>Max Depth</th>
+                                <th>Hold Days</th>
                                 <th>Created</th>
                             </tr>
                         </thead>
@@ -2361,8 +2417,9 @@ DASHBOARD_HTML = """
                             ${campaigns.map(c => `
                                 <tr>
                                     <td><strong>${c.name}</strong></td>
-                                    <td><span class="badge badge-${c.status === 'active' ? 'success' : 'warning'}">${c.status}</span></td>
-                                    <td>${c.commission_type}</td>
+                                    <td><span class="badge badge-${c.is_active ? 'success' : 'warning'}">${c.is_active ? 'Active' : 'Inactive'}</span></td>
+                                    <td>${c.max_depth}</td>
+                                    <td>${c.hold_days}</td>
                                     <td>${formatDate(c.created_at)}</td>
                                 </tr>
                             `).join('')}
@@ -2376,7 +2433,7 @@ DASHBOARD_HTML = """
 
         // Commission Tiers tab
         async function loadTiers() {
-            const resp = await fetch('/commission-tiers', { headers: getHeaders() });
+            const resp = await fetch('/admin/commission-tiers', { headers: getHeaders() });
             const tiers = await resp.json();
 
             let html = `
@@ -2391,7 +2448,7 @@ DASHBOARD_HTML = """
                                 <th>Rate</th>
                                 <th>Min Referrals</th>
                                 <th>Bonus Rate</th>
-                                <th>Hold Days</th>
+                                <th>Active</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -2399,10 +2456,10 @@ DASHBOARD_HTML = """
                                 <tr>
                                     <td>${t.campaign_id}</td>
                                     <td>${t.level}</td>
-                                    <td>${(t.commission_rate_percent).toFixed(1)}%</td>
-                                    <td>${t.min_referrals}</td>
-                                    <td>${(t.bonus_rate_percent || 0).toFixed(1)}%</td>
-                                    <td>${t.commission_hold_days}</td>
+                                    <td>${(t.rate * 100).toFixed(1)}%</td>
+                                    <td>${t.min_referrals_required}</td>
+                                    <td>${((t.bonus_rate || 0) * 100).toFixed(1)}%</td>
+                                    <td><span class="badge badge-${t.is_active ? 'success' : 'danger'}">${t.is_active ? 'Yes' : 'No'}</span></td>
                                 </tr>
                             `).join('')}
                         </tbody>
@@ -2419,7 +2476,7 @@ DASHBOARD_HTML = """
 
         // Payouts tab
         async function loadPayouts() {
-            const resp = await fetch('/payouts', { headers: getHeaders() });
+            const resp = await fetch('/admin/payouts', { headers: getHeaders() });
             const payouts = await resp.json();
 
             let html = `
